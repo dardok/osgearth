@@ -159,6 +159,7 @@ bool osgEarth::isRelativePath(const std::string& fileName)
 
 std::string osgEarth::getFullPath(const std::string& relativeTo, const std::string &relativePath)
 {
+#if 0
     // A cache, since this method uses osgDB::getRealPath which can be quite slow.
     static Threading::Mutex s_cacheMutex;
     typedef std::map<std::string, std::string> PathCache;
@@ -182,6 +183,7 @@ std::string osgEarth::getFullPath(const std::string& relativeTo, const std::stri
     // prevent the cache from growing unbounded
     if (s_cache.size() >= 20000)
         s_cache.clear();
+#endif
 
     // result that will go into the cache:
     std::string result;
@@ -249,8 +251,10 @@ std::string osgEarth::getFullPath(const std::string& relativeTo, const std::stri
         result = path;
     }
 
+#if 0
     // cache the result and return it.
     s_cache[cacheKey] = result;
+#endif
     return result;
 }
 
