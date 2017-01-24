@@ -1,6 +1,6 @@
 /* -*-c++-*- */
 /* osgEarth - Dynamic map generation toolkit for OpenSceneGraph
-* Copyright 2015 Pelican Mapping
+* Copyright 2016 Pelican Mapping
 * http://osgearth.org
 *
 * osgEarth is free software; you can redistribute it and/or modify
@@ -34,10 +34,14 @@
 #include <string>
 #include <map>
 
-#ifdef OSG_GLES2_AVAILABLE
+#if defined(OSG_GLES2_AVAILABLE)
 #    define GLSL_VERSION                 100
 #    define GLSL_VERSION_STR             "100"
 #    define GLSL_DEFAULT_PRECISION_FLOAT "precision highp float;"
+#elif defined(OSG_GL3_AVAILABLE)
+#    define GLSL_VERSION                 330
+#    define GLSL_VERSION_STR             "330"
+#    define GLSL_DEFAULT_PRECISION_FLOAT ""
 #else
 #    define GLSL_VERSION                 330
 #    define GLSL_VERSION_STR             "330 compatibility" 
@@ -374,6 +378,10 @@ namespace osgEarth
         void setMask(unsigned mask) { _mask = mask; }
         unsigned getMask() const { return _mask; }
 
+        /** Sets whether this VP is "abstract", i.e. pure virtual, and cannot be compiled on its own */
+        void setIsAbstract(bool value) { _isAbstract = value; }
+        bool getIsAbstract() const { return _isAbstract; }
+
     public: // StateAttribute
         virtual void compileGLObjects(osg::State& state) const;
         virtual void resizeGLObjectBuffers(unsigned maxSize);
@@ -391,7 +399,6 @@ namespace osgEarth
         {
             ShaderEntry();
             bool accept(const osg::State& state) const;
-            //osg::ref_ptr<osg::Shader>                _shader;
             osg::ref_ptr<PolyShader>                 _shader;
             osg::StateAttribute::OverrideValue       _overrideValue;
             osg::ref_ptr<ShaderComp::AcceptCallback> _accept;
@@ -410,7 +417,6 @@ namespace osgEarth
         typedef std::pair< std::string, std::string > AttribAlias;
         typedef std::vector< AttribAlias >            AttribAliasVector;
 
-        //typedef osgEarth::fast_map< ShaderVector, ProgramEntry > ProgramMap;
         typedef osgEarth::fast_map< ProgramKey, ProgramEntry > ProgramMap;
         typedef std::pair< const osg::StateAttribute*, osg::StateAttribute::OverrideValue > AttributePair;
         typedef std::vector< AttributePair > AttrStack;
@@ -492,11 +498,9 @@ namespace osgEarth
         bool _logShaders;
         std::string _logPath;
 
-        AttribAliasMap _attribAliases;
+        bool _isAbstract;
 
-        // whether to use the "attribute stack memory" feature. default = true.
-        // see below.
-        bool _useStackMemory;
+        AttribAliasMap _attribAliases;
 
         bool _acceptCallbacksVaryPerFrame;
 

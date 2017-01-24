@@ -1,6 +1,6 @@
 /* -*-c++-*- */
 /* osgEarth - Dynamic map generation toolkit for OpenSceneGraph
- * Copyright 2015 Pelican Mapping
+ * Copyright 2016 Pelican Mapping
  * http://osgearth.org
  *
  * osgEarth is free software; you can redistribute it and/or modify
@@ -21,6 +21,8 @@
 #include <osg/Transform>
 #include <osgEarth/Registry>
 #include <osg/ValueObject>
+#include <osg/Geometry>
+#include <osg/Geode>
 
 #define LC "[Horizon] "
 
@@ -29,21 +31,24 @@
 using namespace osgEarth;
 
 Horizon::Horizon() :
-_valid( false )
+_valid( false ),
+_VCmag(0), _VCmag2(0), _VHmag2(0), _coneCos(0), _coneTan(0), _minVCmag(0), _minHAE(0)
 {
     setName(OSGEARTH_HORIZON_UDC_NAME);
     setEllipsoid(osg::EllipsoidModel());
 }
 
 Horizon::Horizon(const osg::EllipsoidModel& e) :
-_valid( false )
+_valid( false ),
+_VCmag(0), _VCmag2(0), _VHmag2(0), _coneCos(0), _coneTan(0), _minVCmag(0), _minHAE(0)
 {
     setName(OSGEARTH_HORIZON_UDC_NAME);
     setEllipsoid( e );
 }
 
 Horizon::Horizon(const SpatialReference* srs) :
-_valid( false )
+_valid( false ),
+_VCmag(0), _VCmag2(0), _VHmag2(0), _coneCos(0), _coneTan(0), _minVCmag(0), _minHAE(0)
 {
     setName(OSGEARTH_HORIZON_UDC_NAME);
     if ( srs && !srs->isProjected() )
@@ -75,27 +80,11 @@ bool
 Horizon::put(osg::NodeVisitor& nv)
 {
     return VisitorData::store( nv, OSGEARTH_HORIZON_UDC_NAME, this );
-//#ifdef OSGEARTH_HORIZON_SUPPORTS_NODEVISITOR
-//    osg::UserDataContainer* udc = nv.getOrCreateUserDataContainer();
-//    unsigned i = udc->getUserObjectIndex(OSGEARTH_HORIZON_UDC_NAME);
-//    if (i < udc->getNumUserObjects()) udc->setUserObject( i, this );
-//    else udc->addUserObject(this);
-//    return true;
-//#else
-//    return false;
-//#endif
 }
 
 Horizon* Horizon::get(osg::NodeVisitor& nv)
 {
     return VisitorData::fetch<Horizon>( nv, OSGEARTH_HORIZON_UDC_NAME );
-//#ifdef OSGEARTH_HORIZON_SUPPORTS_NODEVISITOR
-//    osg::UserDataContainer* udc = nv.getUserDataContainer();
-//    if ( !udc ) return 0L;
-//    unsigned i = udc->getUserObjectIndex(OSGEARTH_HORIZON_UDC_NAME);
-//    if ( i < udc->getNumUserObjects() ) return static_cast<Horizon*>(udc->getUserObject(i));
-//#endif
-//    return 0L;
 }
 
 void
@@ -422,5 +411,95 @@ HorizonCullCallback::operator()(osg::Node* node, osg::NodeVisitor* nv)
     else
     {
         traverse(node, nv);
+    }
+}
+
+
+
+
+HorizonNode::HorizonNode()
+{
+    const float r = 25.0f;
+    osg::DrawElements* de = new osg::DrawElementsUByte(GL_QUADS);
+    de->addElement(0);
+    de->addElement(1);
+
+    osg::Vec3Array* verts = new osg::Vec3Array();
+    for (unsigned x = 0; x<=(unsigned)r; ++x) {
+        verts->push_back(osg::Vec3(-0.5f + float(x) / r, -0.5f, 0.0f));
+        verts->push_back(osg::Vec3(-0.5f + float(x) / r,  0.5f, 0.0f));
+    }
+
+    de->addElement(verts->size()-1);
+    de->addElement(verts->size()-2);
+
+    for (unsigned y=0; y<=(unsigned)r; ++y) {
+        verts->push_back(osg::Vec3(-0.5f, -0.5f + float(y)/r, 0.0f));
+        verts->push_back(osg::Vec3( 0.5f, -0.5f + float(y)/r, 0.0f));
+    }
+
+    osg::Vec4Array* colors = new osg::Vec4Array();
+    colors->push_back(osg::Vec4(1,0,0,0.5f));
+
+    osg::Geometry* geom = new osg::Geometry();
+    geom->setVertexArray(verts);
+    geom->setColorArray(colors);
+    geom->setColorBinding(geom->BIND_OVERALL);
+    geom->addPrimitiveSet(new osg::DrawArrays(GL_LINES, 0, verts->size()));
+    
+    geom->addPrimitiveSet(de);
+
+    osg::Geode* geode = new osg::Geode();
+    geode->addDrawable(geom);
+    geom->getOrCreateStateSet()->setMode(GL_BLEND, 1);
+    geom->getOrCreateStateSet()->setRenderingHint(osg::StateSet::TRANSPARENT_BIN);
+
+    this->addChild(geode);
+
+    setMatrix(osg::Matrix::scale(15e6, 15e6, 15e6));
+}
+
+void
+HorizonNode::traverse(osg::NodeVisitor& nv)
+{
+    bool isStealth = (VisitorData::isSet(nv, "osgEarth.Stealth"));
+
+    if (nv.getVisitorType() == nv.CULL_VISITOR)
+    {
+        if (!isStealth)
+        {
+            //Horizon* h = Horizon::get(nv);
+            osg::ref_ptr<Horizon> h = new Horizon();
+
+            osgUtil::CullVisitor* cv = dynamic_cast<osgUtil::CullVisitor*>(&nv);
+
+            osg::Vec3d eye = osg::Vec3d(0,0,0) * cv->getCurrentCamera()->getInverseViewMatrix();
+            h->setEye(eye);
+
+            osg::Plane plane;
+            if (h->getPlane(plane))
+            {
+                osg::Quat q;
+                q.makeRotate(osg::Plane::Vec3_type(0,0,1), plane.getNormal());
+
+                double dist = plane.distance(osg::Vec3d(0,0,0));
+
+                osg::Matrix m;
+                m.preMultRotate(q);
+                m.preMultTranslate(osg::Vec3d(0, 0, -dist));
+                m.preMultScale(osg::Vec3d(15e6, 15e6, 15e6));
+
+                setMatrix(m);
+            }
+        }
+        else
+        {
+            osg::MatrixTransform::traverse(nv);
+        }
+    }
+       
+    else
+    {
+        osg::MatrixTransform::traverse(nv);
     }
 }

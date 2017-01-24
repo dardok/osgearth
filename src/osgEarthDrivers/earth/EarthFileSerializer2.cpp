@@ -1,6 +1,6 @@
 /* -*-c++-*- */
 /* osgEarth - Dynamic map generation toolkit for OpenSceneGraph
- * Copyright 2015 Pelican Mapping
+ * Copyright 2016 Pelican Mapping
  * http://osgearth.org
  *
  * osgEarth is free software; you can redistribute it and/or modify
@@ -39,7 +39,8 @@ static unsigned int PATH_SEPARATORS_LEN = 2;
 namespace
 {
 
-	class PathIterator {
+	class PathIterator
+    {
 		public:
 			PathIterator(const std::string & v);
 			bool valid() const { return start!=end; }
@@ -54,31 +55,47 @@ namespace
 			/// Iterate until 'it' points to something different from a separator
 			std::string::const_iterator skipSeparators(std::string::const_iterator it);
 			std::string::const_iterator next(std::string::const_iterator it);
-		};
-		PathIterator::PathIterator(const std::string & v) : end(v.end()), start(v.begin()), stop(v.begin()) { operator++(); }
-		PathIterator & PathIterator::operator++()
-		{
-			if (!valid()) return *this;
-				start = skipSeparators(stop);
-			if (start != end) stop = next(start);
-			return *this;
-		}
-		std::string PathIterator::operator*()
-		{
-			if (!valid()) return std::string();
-			return std::string(start, stop);
-		}
+    };
 
-		std::string::const_iterator PathIterator::skipSeparators(std::string::const_iterator it)
-		{
-			for (; it!=end && std::find_first_of(it, it+1, PATH_SEPARATORS, PATH_SEPARATORS+PATH_SEPARATORS_LEN) != it+1; ++it) {}
-			return it;
-		}
+	PathIterator::PathIterator(const std::string & v) : end(v.end()), start(v.begin()), stop(v.begin()) { operator++(); }
 
-		std::string::const_iterator PathIterator::next(std::string::const_iterator it)
-		{
-			return std::find_first_of(it, end, PATH_SEPARATORS, PATH_SEPARATORS+PATH_SEPARATORS_LEN);
-		}
+	PathIterator & PathIterator::operator++()
+	{
+		if (!valid()) return *this;
+			start = skipSeparators(stop);
+		if (start != end) stop = next(start);
+		return *this;
+	}
+	std::string PathIterator::operator*()
+	{
+		if (!valid()) return std::string();
+		return std::string(start, stop);
+	}
+
+	std::string::const_iterator PathIterator::skipSeparators(std::string::const_iterator it)
+	{
+		for (; it!=end && std::find_first_of(it, it+1, PATH_SEPARATORS, PATH_SEPARATORS+PATH_SEPARATORS_LEN) != it+1; ++it) {}
+		return it;
+	}
+
+	std::string::const_iterator PathIterator::next(std::string::const_iterator it)
+	{
+		return std::find_first_of(it, end, PATH_SEPARATORS, PATH_SEPARATORS+PATH_SEPARATORS_LEN);
+	}
+
+    bool isReservedWord(const std::string& k)
+    {
+        return
+            k == "options" ||
+            k == "image" ||
+            k == "elevation" ||
+            k == "heightfield" ||
+            k == "model" ||
+            k == "mask" ||
+            k == "external" ||
+            k == "extensions" ||
+            k == "libraries";
+    }
 
     /**
      * Looks at each key in a Config and tries to match that key to a shared library name;
@@ -89,10 +106,13 @@ namespace
      */
     void preloadExtensionLibs(const Config& conf)
     {
-        ConfigSet extensions = conf.child("extensions").children();
-        for(ConfigSet::const_iterator i = extensions.begin(); i != extensions.end(); ++i)
+        for(ConfigSet::const_iterator i = conf.children().begin(); i != conf.children().end(); ++i)
         {
             const std::string& name = i->key();
+
+            if ( isReservedWord(name) )
+                continue;
+
             if ( !name.empty() )
             {
                 // Load the extension library if necessary.
@@ -293,6 +313,108 @@ namespace
 
 //............................................................................
 
+namespace
+{
+    void addImageLayer(const Config& conf, Map* map)
+    {
+        ImageLayerOptions options( conf );
+        options.name() = conf.value("name");
+        ImageLayer* layer = new ImageLayer(options);
+        map->addLayer(layer);
+        if (layer->getStatus().isError())
+            OE_WARN << LC << "Layer \"" << layer->getName() << "\" : " << layer->getStatus().toString() << std::endl;
+    }
+
+    void addElevationLayer(const Config& conf, Map* map)
+    {
+        ElevationLayerOptions options( conf );
+        options.name() = conf.value( "name" );
+        ElevationLayer* layer = new ElevationLayer(options);
+        map->addLayer(layer);
+        if (layer->getStatus().isError())
+            OE_WARN << LC << "Layer \"" << layer->getName() << "\" : " << layer->getStatus().toString() << std::endl;
+    }
+
+    void addModelLayer(const Config& conf, Map* map)
+    {
+        ModelLayerOptions options( conf );
+        options.name() = conf.value( "name" );
+        options.driver() = ModelSourceOptions( conf );
+        ModelLayer* layer = new ModelLayer(options);
+        map->addLayer(layer);
+        if (layer->getStatus().isError())
+            OE_WARN << LC << "Layer \"" << layer->getName() << "\" : " << layer->getStatus().toString() << std::endl;
+    }
+
+    void addMaskLayer(const Config& conf, Map* map)
+    {
+        MaskLayerOptions options(conf);
+        options.name() = conf.value( "name" );
+        options.driver() = MaskSourceOptions(options);
+        MaskLayer* layer = new MaskLayer(options);
+        map->addLayer(layer);
+        if (layer->getStatus().isError())
+            OE_WARN << LC << "Layer \"" << layer->getName() << "\" : " << layer->getStatus().toString() << std::endl;
+    }
+
+    // support for "special" extension names (convenience and backwards compat)
+    Extension* createSpecialExtension(const Config& conf)
+    {
+        // special support for the default sky extension:
+        if (conf.key() == "sky" && !conf.hasValue("driver"))
+            return Extension::create("sky_simple", conf);
+
+        if (conf.key() == "ocean" && !conf.hasValue("driver"))
+            return Extension::create("ocean_simple", conf);
+
+        return 0L;
+    }
+
+    bool addLayer(const Config& conf, Map* map)
+    {
+        std::string name = conf.key();
+        Layer* layer = Layer::create(name, conf);
+        if (layer)
+        {
+            map->addLayer(layer);
+            if (layer->getStatus().isError())
+                OE_WARN << LC << "Layer \"" << layer->getName() << "\" : " << layer->getStatus().toString() << std::endl;
+        }
+        return layer != 0L;
+    }
+
+    Extension* loadExtension(const Config& conf)
+    {
+        std::string name = conf.key();
+        Extension* extension = Extension::create( conf.key(), conf );
+        if ( !extension )
+        {
+            name = conf.key() + "_" + conf.value("driver");
+            extension = Extension::create(name, conf);
+
+            if (!extension)
+                extension = createSpecialExtension(conf);
+        }
+
+        if (!extension)
+        {
+            OE_INFO << LC << "Failed to find an extension for \"" << name << "\"\n";
+        }
+
+        return extension;
+        //if (extension)
+        //{
+        //    mapNode->addExtension(extension);
+        //    return true;
+        //}
+        //else
+        //{            
+        //    OE_INFO << LC << "Failed to find an extension for \"" << name << "\"\n";
+        //    return false;
+        //}
+    }
+}
+
 EarthFileSerializer2::EarthFileSerializer2() :
 _rewritePaths        ( true ),
 _rewriteAbsolutePaths( false )
@@ -301,11 +423,13 @@ _rewriteAbsolutePaths( false )
 }
 
 
-MapNode*
+osg::Node*
 EarthFileSerializer2::deserialize( const Config& conf, const std::string& referrer ) const
 {
     // First, pre-load any extension DLLs.
     preloadExtensionLibs(conf);
+    preloadExtensionLibs(conf.child("extensions"));
+    preloadExtensionLibs(conf.child("external"));
 
     MapOptions mapOptions( conf.child( "options" ) );
 
@@ -320,107 +444,101 @@ EarthFileSerializer2::deserialize( const Config& conf, const std::string& referr
 
     Map* map = new Map( mapOptions );
 
-    // Yes, MapOptions and MapNodeOptions share the same Config node. Weird but true.
-    MapNodeOptions mapNodeOptions( conf.child( "options" ) );
+    // Start a batch update of the map:
+    map->beginUpdate();
+
+    // Read all the elevation layers in FIRST so other layers can access them for things like clamping.
+    for(ConfigSet::const_iterator i = conf.children().begin(); i != conf.children().end(); ++i)
+    {
+        if ( i->key() == "elevation" || i->key() == "heightfield" )
+        {
+            addElevationLayer( *i, map );
+        }
+    }
+
+    Config externalConfig;
+    std::vector<osg::ref_ptr<Extension> > extensions;
 
     // Read the layers in LAST (otherwise they will not benefit from the cache/profile configuration)
-
-    // Image layers:
-    ConfigSet images = conf.children( "image" );
-    for( ConfigSet::const_iterator i = images.begin(); i != images.end(); i++ )
+    for(ConfigSet::const_iterator i = conf.children().begin(); i != conf.children().end(); ++i)
     {
-        Config layerDriverConf = *i;        
-
-        ImageLayerOptions layerOpt( layerDriverConf );
-        layerOpt.name() = layerDriverConf.value("name");
-
-        map->addImageLayer( new ImageLayer(layerOpt) );
-    }
-
-    // Elevation layers:
-    for( int k=0; k<2; ++k )
-    {
-        std::string tagName = k == 0 ? "elevation" : "heightfield"; // support both :)
-
-        ConfigSet heightfields = conf.children( tagName );
-        for( ConfigSet::const_iterator i = heightfields.begin(); i != heightfields.end(); i++ )
+        if (i->key() == "options" || i->key() == "name" || i->key() == "type" || i->key() == "version")
         {
-            Config layerDriverConf = *i;            
+            // nop - handled earlier
+        }
 
-            ElevationLayerOptions layerOpt( layerDriverConf );
-            layerOpt.name() = layerDriverConf.value( "name" );
+        else if ( i->key() == "image" )
+        {
+            addImageLayer( *i, map );
+        }
 
-            map->addElevationLayer( new ElevationLayer(layerOpt) );
+        else if ( i->key() == "model" )
+        {
+            addModelLayer( *i, map );
+        }
+
+        else if ( i->key() == "mask" )
+        {
+            addMaskLayer( *i, map );
+        }
+
+        else if ( i->key() == "external" || i->key() == "extensions" )
+        {
+            externalConfig = *i;
+            
+            for(ConfigSet::const_iterator e = i->children().begin(); e != i->children().end(); ++e)
+            {
+                Extension* extension = loadExtension(*e);
+                if (extension)
+                    extensions.push_back(extension);
+                //addExtension( *e, mapNode.get() );
+            }
+        }
+
+        else if ( !isReservedWord(i->key()) ) // plugins/extensions.
+        {
+            bool addedLayer = addLayer(*i, map); //mapNode.get());
+
+            if ( !addedLayer )
+            {
+                Extension* extension = loadExtension(*i);
+                if (extension)
+                    extensions.push_back(extension);
+                //OE_INFO << LC << "Tried to load \"" << i->key() << "\" as a layer; now trying extension\n";
+                //addExtension( *i, mapNode.get() );
+            }
         }
     }
 
-    // Model layers:
-    ConfigSet models = conf.children( "model" );
-    for( ConfigSet::const_iterator i = models.begin(); i != models.end(); i++ )
-    {
-        const Config& layerDriverConf = *i;
+    // Complete the batch update of the map
+    map->endUpdate();
 
-        ModelLayerOptions layerOpt( layerDriverConf );
-        layerOpt.name() = layerDriverConf.value( "name" );
-        layerOpt.driver() = ModelSourceOptions( layerDriverConf );
+    // Yes, MapOptions and MapNodeOptions share the same Config node. Weird but true.
+    MapNodeOptions mapNodeOptions( conf.child("options") );
 
-        map->addModelLayer( new ModelLayer(layerOpt) );
-    }
-
-    // Mask layer:
-    ConfigSet masks = conf.children( "mask" );
-    for( ConfigSet::const_iterator i = masks.begin(); i != masks.end(); i++ )
-    {
-        Config maskLayerConf = *i;
-
-        MaskLayerOptions options(maskLayerConf);
-        options.name() = maskLayerConf.value( "name" );
-        options.driver() = MaskSourceOptions(options);
-
-        map->addTerrainMaskLayer( new MaskLayer(options) );
-    }
-
-    
-    //Add any addition paths specified in the options/osg_file_paths element to the file path.  Useful for pointing osgEarth at resource folders.
-    Config osg_file_paths = conf.child( "options" ).child("osg_file_paths");
-    ConfigSet urls = osg_file_paths.children("url");
-    for (ConfigSet::const_iterator i = urls.begin(); i != urls.end(); i++) 
-    {
-        std::string path = osgEarth::getFullPath( referrer, (*i).value());
-        OE_DEBUG << "Adding OSG file path " << path << std::endl;
-        osgDB::Registry::instance()->getDataFilePathList().push_back( path );
-    }
-
+    // Create a map node.
     osg::ref_ptr<MapNode> mapNode = new MapNode( map, mapNodeOptions );
 
-    // External configs. Support both "external" and "extensions" tags.
-
-    Config ext = conf.child( "external" );
-    if ( ext.empty() )
-        ext = conf.child( "extensions" );
-
-    if ( !ext.empty() )
+    // Apply the external conf if there is one.
+    if (!externalConfig.empty())
     {
-        // save the configuration in case we need to write it back out later
-        mapNode->externalConfig() = ext;
-
-        // locate and install any registered extensions.
-        ConfigSet extensions = ext.children();
-        for(ConfigSet::const_iterator i = extensions.begin(); i != extensions.end(); ++i)
-        {
-            Extension* extension = Extension::create( i->key(), *i );
-            if ( extension )
-            {
-                mapNode->addExtension( extension );
-            }
-            else
-            {
-                OE_DEBUG << LC << "Failed to load an extension for \"" << i->key() << "\"\n";
-            }
-        }
+        mapNode->externalConfig() = externalConfig;
     }
 
-    return mapNode.release();
+    // Install the extensions
+    for (unsigned i = 0; i < extensions.size(); ++i)
+    {
+        mapNode->addExtension(extensions.at(i).get());
+    }
+
+    // return the topmost parent of the mapnode. It's possible that
+    // an extension added parents!
+    osg::Node* top = mapNode.release();
+
+    while( top->getNumParents() > 0 )
+        top = top->getParent(0);
+
+    return top;
 }
 
 
@@ -434,7 +552,7 @@ EarthFileSerializer2::serialize(const MapNode* input, const std::string& referre
         return mapConf; 
 
     const Map* map = input->getMap();
-    MapFrame mapf( map, Map::ENTIRE_MODEL );
+    MapFrame mapf( map );
 
     // the map and node options:
     Config optionsConf = map->getInitialMapOptions().getConfig();
@@ -442,43 +560,38 @@ EarthFileSerializer2::serialize(const MapNode* input, const std::string& referre
     mapConf.add( "options", optionsConf );
 
     // the layers
-    for( ImageLayerVector::const_iterator i = mapf.imageLayers().begin(); i != mapf.imageLayers().end(); ++i )
+    LayerVector layers;
+    mapf.getLayers(layers);
+
+    for (LayerVector::const_iterator i = layers.begin(); i != layers.end(); ++i)
     {
-        ImageLayer* layer = i->get();
-        //Config layerConf = layer->getInitialOptions().getConfig();
-        Config layerConf = layer->getImageLayerOptions().getConfig();
-        layerConf.set("name", layer->getName());
-        layerConf.set("driver", layer->getInitialOptions().driver()->getDriver());        
-        mapConf.add( "image", layerConf );
+        const Layer* layer = i->get();
+
+        Config layerConf = layer->getConfig();
+        if (!layerConf.empty())
+        {
+            mapConf.add(layerConf);
+        }
     }
 
-    for( ElevationLayerVector::const_iterator i = mapf.elevationLayers().begin(); i != mapf.elevationLayers().end(); ++i )
+    typedef std::vector< osg::ref_ptr<Extension> > Extensions;
+    for(Extensions::const_iterator i = input->getExtensions().begin(); i != input->getExtensions().end(); ++i)
     {
-        ElevationLayer* layer = i->get();
-        //Config layerConf = layer->getInitialOptions().getConfig();
-        Config layerConf = layer->getElevationLayerOptions().getConfig();
-        layerConf.set("name", layer->getName());
-        layerConf.set("driver", layer->getInitialOptions().driver()->getDriver());        
-        mapConf.add( "elevation", layerConf );
-    }
-
-    for( ModelLayerVector::const_iterator i = mapf.modelLayers().begin(); i != mapf.modelLayers().end(); ++i )
-    {
-        ModelLayer* layer = i->get();
-        Config layerConf = layer->getModelLayerOptions().getConfig();
-        layerConf.set("name", layer->getName());
-        layerConf.set("driver", layer->getModelLayerOptions().driver()->getDriver());
-        mapConf.add( "model", layerConf );
+        Extension* e = i->get();
+        Config conf = e->getConfigOptions().getConfig();
+        if ( !conf.key().empty() )
+        {
+            mapConf.add( conf );
+        }
     }
 
     Config ext = input->externalConfig();
     if ( !ext.empty() )
     {
-        ext.key() = "extensions";
+        ext.key() = "external";
         mapConf.add( ext );
     }
 
-#if 1 // removed until it can be debugged.
     // Re-write pathnames in the Config so they are relative to the new referrer.
     if ( _rewritePaths && !referrer.empty() )
     {
@@ -486,7 +599,6 @@ EarthFileSerializer2::serialize(const MapNode* input, const std::string& referre
         rewritePaths.setRewriteAbsolutePaths( _rewriteAbsolutePaths );
         rewritePaths.apply( mapConf );
     }
-#endif
 
     return mapConf;
 }

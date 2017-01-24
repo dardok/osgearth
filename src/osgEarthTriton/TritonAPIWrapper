@@ -1,6 +1,6 @@
 /* -*-c++-*- */
 /* osgEarth - Dynamic map generation toolkit for OpenSceneGraph
- * Copyright 2015 Pelican Mapping
+ * Copyright 2016 Pelican Mapping
  * http://osgearth.org
  *
  * osgEarth is free software; you can redistribute it and/or modify
@@ -23,6 +23,11 @@
 #include <osg/Vec3>
 #include <stdint.h> // for uintptr_t
 
+namespace osgEarth {
+    namespace Util {
+        class OceanNode;
+    }
+}
 
 namespace osgEarth { namespace Triton
 {
@@ -57,6 +62,9 @@ namespace osgEarth { namespace Triton
         void SetAmbientLight(const osg::Vec3& color);
         osg::Vec3 GetAmbientLightColor() const;
 
+        void SetSunIntensity(float intensity);
+        float GetSunIntensity() const;
+
         BreakingWavesParameters GetBreakingWavesParameters() const;
 
         void SimulateSeaState(double bs, double winddir);
@@ -72,11 +80,19 @@ namespace osgEarth { namespace Triton
         void SetChoppiness(float);
         float GetChoppiness() const;
 
+        void EnableWireframe(bool wireframe);
+
         void SetQuality(OceanQuality value);
         OceanQuality GetQuality() const;
 
-        //void SetMaximumWavePeriod(double value);
-        //double GetMaximumWavePeriod() const;
+        void EnableSpray(bool enabled);
+        bool SprayEnabled() const;
+
+        void EnableGodRays(bool enabled);
+        bool GodRaysEnabled() const;
+
+        void SetGodRaysFade(float fadeAmount);
+        float GetGodRaysFade() const;
 
     public:
         Ocean(uintptr_t handle) : _handle(handle) { }

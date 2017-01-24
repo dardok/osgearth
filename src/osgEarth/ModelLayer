@@ -1,6 +1,6 @@
 /* -*-c++-*- */
 /* osgEarth - Dynamic map generation toolkit for OpenSceneGraph
- * Copyright 2015 Pelican Mapping
+ * Copyright 2016 Pelican Mapping
  * http://osgearth.org
  *
  * osgEarth is free software; you can redistribute it and/or modify
@@ -23,7 +23,7 @@
 #include <osgEarth/Common>
 #include <osgEarth/AlphaEffect>
 #include <osgEarth/Layer>
-#include <osgEarth/CachePolicy>
+#include <osgEarth/Cache>
 #include <osgEarth/Config>
 #include <osgEarth/ModelSource>
 #include <osgEarth/MaskSource>
@@ -52,8 +52,14 @@ namespace osgEarth
             const std::string&        name, 
             const ModelSourceOptions& driverOptions =ModelSourceOptions() );
 
+        /** Copy ctor*/
+        ModelLayerOptions(const ModelLayerOptions& rhs);
+
         /** dtor */
         virtual ~ModelLayerOptions() { }
+
+        /** Assignment operator */
+        ModelLayerOptions& operator = (const ModelLayerOptions&);
 
         /**
          * The readable name of the layer.
@@ -118,6 +124,12 @@ namespace osgEarth
         optional<CachePolicy>& cachePolicy() { return _cachePolicy; }
         const optional<CachePolicy>& cachePolicy() const { return _cachePolicy; }
 
+        /**
+         * Express cacheid (overrides an automatically generated cache id)
+         */
+        optional<std::string>& cacheId() { return _cacheId; }
+        const optional<std::string>& cacheId() const { return _cacheId; }
+
 
     public:
         virtual Config getConfig() const;
@@ -137,6 +149,7 @@ namespace osgEarth
         optional<unsigned>           _maskMinLevel;
         optional<bool>               _terrainPatch;
         optional<CachePolicy>        _cachePolicy;
+        optional<std::string>        _cacheId;
     };
 
     /**
@@ -149,7 +162,7 @@ namespace osgEarth
         virtual ~ModelLayerCallback() { }
     };
 
-    typedef void (ModelLayerCallback::*ModelLayerCallbackMethodPtr)(ModelLayer* layer);
+    typedef void (ModelLayerCallback::*ModelLayerCallbackMethodPtr)(class ModelLayer* layer);
 
     typedef std::list< osg::ref_ptr<ModelLayerCallback> > ModelLayerCallbackList;
 
@@ -169,6 +182,10 @@ namespace osgEarth
         
         /**
          * Constructs a new model layer with a user-provided model source.
+         *
+         * Note: the ModelLayerOptions contains a driver() member for configuring a 
+         * TileSource. But in this constructor, you are passing in an existing TileSource,
+         * and thus the driver() member in ModelLayerOptions will not be used.
          */
         ModelLayer(const ModelLayerOptions& options, ModelSource* source );
 
@@ -180,11 +197,13 @@ namespace osgEarth
         /** dtor */
         virtual ~ModelLayer();
 
-    public:
+    public: // osg::Object
         /** 
          * Gets the name of this model layer
          */
-        const std::string& getName() const { return *_runtimeOptions.name(); }
+        virtual void setName(const std::string& name);
+
+    public:
 
         /**
          * Gets the initialization options for this layer.
@@ -224,9 +243,15 @@ namespace osgEarth
     public:
 
         /**
-         * Perform one-time initialize of the model layer.
+         * Sets the read options for this layer to user; this includes
+         * Cache and CachePolicy information potentially.
          */
-        void initialize( const osgDB::Options* options );
+        void setReadOptions(const osgDB::Options* readOptions);
+
+        /**
+         * Perform one-time initialization of the model layer.
+         */
+        const Status& open();
 
         /**
          * Creates the scene graph representing this model layer for the given Map,
@@ -238,19 +263,13 @@ namespace osgEarth
          * Gets a scene graph what was previously created with getOrCreateSceneGraph.
          */
         osg::Node* getSceneGraph(const UID& mapUID) const;
-        
-        /**
-         * This layer's caching policy
-         */
-        void setCachePolicy(const CachePolicy& cachePolicy);
-        const CachePolicy& getCachePolicy() const;
 
     public: // deprecated
         
         /** @deprecated */
         osg::Node* getOrCreateSceneGraph( 
             const Map*            map, 
-            const osgDB::Options* dbOptions,
+            const osgDB::Options* readOptions,
             ProgressCallback*     progress ) { return getOrCreateSceneGraph(map, progress); }
 
     public: // properties
@@ -260,7 +279,7 @@ namespace osgEarth
         void setVisible(bool value);
 
         /** Whether this layer is used at all. */
-        bool getEnabled() const;
+        virtual bool getEnabled() const;
 
         /** whether to apply lighting to the model layer's root node */
         void setLightingEnabled( bool value );
@@ -273,6 +292,10 @@ namespace osgEarth
         void setOpacity( float opacity );
         float getOpacity() const;
 
+    public: // Layer
+
+        virtual Config getConfig() const;
+
     public:
 
         /** Adds a property notification callback to this layer */
@@ -280,6 +303,7 @@ namespace osgEarth
 
         /** Removes a property notification callback from this layer */
         void removeCallback( ModelLayerCallback* cb );
+
 
     private:
         osg::ref_ptr<ModelSource>     _modelSource;
@@ -290,7 +314,8 @@ namespace osgEarth
         ModelLayerCallbackList        _callbacks;
         osg::ref_ptr<AlphaEffect>     _alphaEffect;
         osg::ref_ptr<osg::Vec3dArray> _maskBoundary;
-        osg::ref_ptr<osgDB::Options>  _dbOptions;
+        osg::ref_ptr<osgDB::Options>  _readOptions;
+        osg::ref_ptr<CacheSettings>   _cacheSettings;
 
         typedef fast_map<UID, osg::observer_ptr<osg::Node> > Graphs;
         Graphs _graphs;
@@ -302,8 +327,6 @@ namespace osgEarth
         void copyOptions();
 
         void setLightingEnabledNoLock(bool value);
-        
-        void initializeCachePolicy(const osgDB::Options* options);
     };
 
     typedef std::vector< osg::ref_ptr<ModelLayer> > ModelLayerVector;

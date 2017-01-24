@@ -1,6 +1,6 @@
 /* -*-c++-*- */
 /* osgEarth - Dynamic map generation toolkit for OpenSceneGraph
-* Copyright 2015 Pelican Mapping
+* Copyright 2016 Pelican Mapping
 * http://osgearth.org
 *
 * osgEarth is free software; you can redistribute it and/or modify
@@ -24,6 +24,10 @@
 #include <osgEarth/Notify>
 #include <osgEarthUtil/EarthManipulator>
 #include <osgEarthUtil/ExampleResources>
+#include <osgEarth/MapNode>
+#include <osgEarth/ThreadingUtils>
+#include <osgEarth/Metrics>
+#include <iostream>
 
 #define LC "[viewer] "
 
@@ -40,6 +44,7 @@ usage(const char* name)
     return 0;
 }
 
+
 int
 main(int argc, char** argv)
 {
@@ -51,6 +56,8 @@ main(int argc, char** argv)
 
     float vfov = -1.0f;
     arguments.read("--vfov", vfov);
+
+    
 
     // create a viewer:
     osgViewer::Viewer viewer(arguments);
@@ -81,14 +88,16 @@ main(int argc, char** argv)
 
     // load an earth file, and support all or our example command-line options
     // and earth file <external> tags    
-    osg::Node* node = MapNodeHelper().load( arguments, &viewer );
+    osg::Node* node = MapNodeHelper().load(arguments, &viewer);
     if ( node )
     {
         viewer.setSceneData( node );
-        viewer.run();
+        Metrics::run(viewer);
     }
     else
     {
         return usage(argv[0]);
     }
+
+    return 0;
 }

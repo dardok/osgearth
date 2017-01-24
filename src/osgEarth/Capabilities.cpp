@@ -1,6 +1,6 @@
 /* -*-c++-*- */
 /* osgEarth - Dynamic map generation toolkit for OpenSceneGraph
- * Copyright 2015 Pelican Mapping
+ * Copyright 2016 Pelican Mapping
  * http://osgearth.org
  *
  * osgEarth is free software; you can redistribute it and/or modify
@@ -17,6 +17,7 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>
  */
 #include <osgEarth/Capabilities>
+#include <osgEarth/Version>
 #include <osg/FragmentProgram>
 #include <osg/GraphicsContext>
 #include <osg/GL>
@@ -165,6 +166,8 @@ _maxTextureBufferSize   ( 0 )
         osg::GraphicsContext* gc = mgc._gc.get();
         unsigned int id = gc->getState()->getContextID();
         const osg::GL2Extensions* GL2 = osg::GL2Extensions::Get( id, true );
+
+        OE_INFO << LC << "osgEarth Version: " << osgEarthGetVersion() << std::endl;
         
         if ( ::getenv("OSGEARTH_NO_GLSL") )
         {
@@ -321,9 +324,6 @@ _maxTextureBufferSize   ( 0 )
 #else
         _supportsFragDepthWrite = true;
 #endif
-
-        //_supportsTexture2DLod = osg::isGLExtensionSupported( id, "GL_ARB_shader_texture_lod" );
-        //OE_INFO << LC << "  texture2DLod = " << SAYBOOL(_supportsTexture2DLod) << std::endl;
 
         // NVIDIA:
         bool isNVIDIA = _vendor.find("NVIDIA") == 0;

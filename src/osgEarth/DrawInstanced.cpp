@@ -1,6 +1,6 @@
 /* -*-c++-*- */
 /* osgEarth - Dynamic map generation toolkit for OpenSceneGraph
- * Copyright 2015 Pelican Mapping
+ * Copyright 2016 Pelican Mapping
  * http://osgearth.org
  *
  * osgEarth is free software; you can redistribute it and/or modify
@@ -127,16 +127,6 @@ namespace
     };
 
     typedef std::map< osg::ref_ptr<osg::Node>, std::vector<ModelInstance> > ModelInstanceMap;
-    
-    /**
-     * Simple bbox callback to return a static bbox.
-     */
-    struct StaticBoundingBox : public osg::Drawable::ComputeBoundingBoxCallback
-    {
-        osg::BoundingBox _bbox;
-        StaticBoundingBox( const osg::BoundingBox& bbox ) : _bbox(bbox) { }
-        osg::BoundingBox computeBound(const osg::Drawable&) const { return _bbox; }
-    };
 
     // assume x is positive
     static int nextPowerOf2(int x)
@@ -158,12 +148,11 @@ ConvertToDrawInstanced::ConvertToDrawInstanced(unsigned                numInstan
                                                const osg::BoundingBox& bbox,
                                                bool                    optimize ) :
 _numInstances    ( numInstances ),
+_bbox(bbox),
 _optimize        ( optimize )
 {
     setTraversalMode( TRAVERSE_ALL_CHILDREN );
     setNodeMaskOverride( ~0 );
-
-    _staticBBoxCallback = new StaticBoundingBox(bbox);
 }
 
 
@@ -182,11 +171,7 @@ ConvertToDrawInstanced::apply( osg::Geode& geode )
                 geom->setUseVertexBufferObjects( true );
             }
 
-            if ( _staticBBoxCallback.valid() )
-            {
-                geom->setComputeBoundingBoxCallback( _staticBBoxCallback.get() ); 
-                geom->dirtyBound();
-            }
+            geom->setInitialBound(_bbox);
 
             // convert to use DrawInstanced
             for( unsigned p=0; p<geom->getNumPrimitiveSets(); ++p )
@@ -266,7 +251,6 @@ DrawInstanced::remove(osg::StateSet* stateset)
     pkg.unload( vp, pkg.InstancingVertex );
 
     stateset->removeUniform("oe_di_postex_TBO");
-    stateset->removeUniform("oe_di_postex_TBO_size");
 }
 
 
@@ -279,7 +263,7 @@ DrawInstanced::convertGraphToUseDrawInstanced( osg::Group* parent )
     // place a static bounding sphere on the graph since we intend to alter
     // the structure of the subgraph.
     const osg::BoundingSphere& bs = parent->getBound();
-    parent->setComputeBoundingSphereCallback( new StaticBound(bs) );
+    parent->setInitialBound(bs);
     parent->dirtyBound();
 
     ModelInstanceMap models;
@@ -426,12 +410,13 @@ DrawInstanced::convertGraphToUseDrawInstanced( osg::Group* parent )
 
         osg::StateSet* stateset = instanceGroup->getOrCreateStateSet();
         stateset->setTextureAttribute(POSTEX_TBO_UNIT, posTBO);
-        stateset->getOrCreateUniform("oe_di_postex_TBO_size", osg::Uniform::INT)->set((int)tboSize);
 
 		// add the node as a child:
         instanceGroup->addChild( node );
 
         parent->addChild( instanceGroup );
+
+        //OE_INFO << LC << "ConvertToDI: instances=" << numInstancesToStore << "\n";
     }
 
     return true;

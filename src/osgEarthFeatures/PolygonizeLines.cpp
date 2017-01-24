@@ -1,6 +1,6 @@
 /* -*-c++-*- */
 /* osgEarth - Dynamic map generation toolkit for OpenSceneGraph
- * Copyright 2015 Pelican Mapping
+ * Copyright 2016 Pelican Mapping
  * http://osgearth.org
  *
  * osgEarth is free software; you can redistribute it and/or modify
@@ -207,6 +207,7 @@ PolygonizeLinesOperator::operator()(osg::Vec3Array* verts,
     for( int ss=firstside; ss<=lastside; ++ss )
     {
         float side = ss == 0 ? RIGHT_SIDE : LEFT_SIDE;
+        float tx = side == RIGHT_SIDE? 1.0f : 0.0f;
 
         // iterate over each line segment.
         for( i=0; i<lineSize-1; ++i )
@@ -240,7 +241,8 @@ PolygonizeLinesOperator::operator()(osg::Vec3Array* verts,
 
                 // first tex coord:
                 // TODO: revisit. I believe we have them going x = [-1..1] instead of [0..1] -gw
-                tverts->push_back( osg::Vec2f(1.0*side, (*tverts)[i].y()) );
+                //tverts->push_back( osg::Vec2f(1.0*side, (*tverts)[i].y()) );
+                tverts->push_back( osg::Vec2f(tx, (*tverts)[i].y()) );
 
                 // first normal
                 normals->push_back( (*normals)[i] );
@@ -265,7 +267,7 @@ PolygonizeLinesOperator::operator()(osg::Vec3Array* verts,
 
                         verts->push_back( (*verts)[i] + v );
                         addTri( ebo, i, verts->size()-2, verts->size()-1, side );
-                        tverts->push_back( osg::Vec2f(1.0*side, (*tverts)[i].y()) );
+                        tverts->push_back( osg::Vec2f(tx, (*tverts)[i].y()) );
                         normals->push_back( (*normals)[i] );
                         if ( spine ) spine->push_back( (*verts)[i] );
                     }
@@ -276,13 +278,13 @@ PolygonizeLinesOperator::operator()(osg::Vec3Array* verts,
 
                     verts->push_back( verts->back() - dir*halfWidth );
                     addTri( ebo, i, verts->size()-2, verts->size()-1, side );
-                    tverts->push_back( osg::Vec2f(1.0*side, (*tverts)[i].y()) );
+                    tverts->push_back( osg::Vec2f(tx, (*tverts)[i].y()) );
                     normals->push_back( normals->back() );
                     if ( spine ) spine->push_back( (*verts)[i] );
 
                     verts->push_back( (*verts)[i] - dir*halfWidth );
                     addTri( ebo, i, verts->size()-2, verts->size()-1, side );
-                    tverts->push_back( osg::Vec2f(1.0*side, (*tverts)[i].y()) );
+                    tverts->push_back( osg::Vec2f(tx, (*tverts)[i].y()) );
                     normals->push_back( (*normals)[i] );
                     if ( spine ) spine->push_back( (verts->back() - (*verts)[i]) * sqrt(2.0f) );
                 }
@@ -336,7 +338,7 @@ PolygonizeLinesOperator::operator()(osg::Vec3Array* verts,
                     // for *previous* segment.
                     //if ( addedVertex )
                     addTris( ebo, i, prevBufVertPtr, verts->size()-1, side );
-                    tverts->push_back( osg::Vec2f(1.0*side, (*tverts)[i].y()) );
+                    tverts->push_back( osg::Vec2f(tx, (*tverts)[i].y()) );
                     normals->push_back( (*normals)[i] );
 
                     if ( spine ) spine->push_back( (*verts)[i] );
@@ -349,7 +351,7 @@ PolygonizeLinesOperator::operator()(osg::Vec3Array* verts,
 
                     verts->push_back( start );
                     addTris( ebo, i, prevBufVertPtr, verts->size()-1, side );
-                    tverts->push_back( osg::Vec2f(1.0*side, (*tverts)[i].y()) );
+                    tverts->push_back( osg::Vec2f(tx, (*tverts)[i].y()) );
                     normals->push_back( (*normals)[i] );
                     if ( spine ) spine->push_back( (*verts)[i] );
 
@@ -367,7 +369,7 @@ PolygonizeLinesOperator::operator()(osg::Vec3Array* verts,
 
                         verts->push_back( (*verts)[i] + v );
                         addTri( ebo, i, verts->size()-1, verts->size()-2, side );
-                        tverts->push_back( osg::Vec2f(1.0*side, (*tverts)[i].y()) );
+                        tverts->push_back( osg::Vec2f(tx, (*tverts)[i].y()) );
                         normals->push_back( (*normals)[i] );
 
                         if ( spine ) spine->push_back( (*verts)[i] );
@@ -387,7 +389,7 @@ PolygonizeLinesOperator::operator()(osg::Vec3Array* verts,
         // record the final point data.
         verts->push_back( (*verts)[i] + prevBufVec );
         addTris( ebo, i, prevBufVertPtr, verts->size()-1, side );
-        tverts->push_back( osg::Vec2f(1.0*side, (*tverts)[i].y()) );
+        tverts->push_back( osg::Vec2f(tx, (*tverts)[i].y()) );
         normals->push_back( (*normals)[i] );
         if ( spine ) spine->push_back( (*verts)[i] );
 
@@ -407,7 +409,7 @@ PolygonizeLinesOperator::operator()(osg::Vec3Array* verts,
                 rotate( circlevec, (side)*a, up, v );
                 verts->push_back( (*verts)[i] + v );
                 addTri( ebo, i, verts->size()-1, verts->size()-2, side );
-                tverts->push_back( osg::Vec2f(1.0*side, (*tverts)[i].y()) );
+                tverts->push_back( osg::Vec2f(tx, (*tverts)[i].y()) );
                 normals->push_back( (*normals)[i] );
                 if ( spine ) spine->push_back( (*verts)[i] );
             }
@@ -418,7 +420,7 @@ PolygonizeLinesOperator::operator()(osg::Vec3Array* verts,
 
             verts->push_back( verts->back() + prevDir*halfWidth );
             addTri( ebo, i, verts->size()-1, verts->size()-2, side );
-            tverts->push_back( osg::Vec2f(1.0*side, (*tverts)[i].y()) );
+            tverts->push_back( osg::Vec2f(tx, (*tverts)[i].y()) );
             normals->push_back( normals->back() );
             if ( spine ) spine->push_back( (*verts)[i] );
 
@@ -451,11 +453,15 @@ PolygonizeLinesOperator::operator()(osg::Vec3Array* verts,
      
 #if 0
     //TESTING
-    osg::Image* image = osgDB::readImageFile("E:/data/textures/road.jpg");
+    osg::Image* image = osgDB::readImageFile("H:/data/textures/road.png");
     osg::Texture2D* tex = new osg::Texture2D(image);
     tex->setWrap( osg::Texture::WRAP_S, osg::Texture::CLAMP_TO_EDGE );
     tex->setWrap( osg::Texture::WRAP_T, osg::Texture::REPEAT );
-    geom->getOrCreateStateSet()->setTextureAttributeAndModes(0, tex, 1);
+    tex->setFilter( osg::Texture::MIN_FILTER, osg::Texture::LINEAR_MIPMAP_LINEAR );
+    tex->setFilter( osg::Texture::MAG_FILTER, osg::Texture::LINEAR);
+    tex->setMaxAnisotropy( 4.0f );
+    tex->setResizeNonPowerOfTwoHint( false );
+    geom->getOrCreateStateSet()->setTextureAttributeAndModes(0, tex, osg::StateAttribute::ON);
 #endif
 
     return geom;
@@ -542,7 +548,7 @@ PolygonizeLinesOperator::installShaders(osg::Node* node) const
     const char* vs =
         "#version " GLSL_VERSION_STR "\n"
         GLSL_DEFAULT_PRECISION_FLOAT "\n"
-        "attribute vec3 oe_polyline_center; \n"
+        "in vec3 oe_polyline_center; \n"
         "uniform float oe_polyline_scale;  \n"
         "uniform float oe_polyline_min_pixels; \n"
         "uniform vec4 oe_PixelSizeVector; \n"
@@ -581,10 +587,6 @@ PolygonizeLinesOperator::installShaders(osg::Node* node) const
 
     // this will install and update the oe_PixelSizeVector uniform.
     node->addCullCallback( new PixelSizeVectorCullCallback(stateset) );
-
-    // DYNAMIC since we will be altering the uniforms and we don't want 
-    // the stateset to get shared via statesetcache optimization.
-    stateset->setDataVariance(osg::Object::DYNAMIC);
 }
 
 

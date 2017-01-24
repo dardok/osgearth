@@ -47,7 +47,8 @@ public:
       FeatureSource( options ),
       _options     ( options ),
       _minLevel(0),
-      _maxLevel(14)
+      _maxLevel(14),
+      _database(0L)
     {
         _compressor = osgDB::Registry::instance()->getObjectWrapperManager()->findCompressor("zlib");
         if (!_compressor.valid())
@@ -62,52 +63,14 @@ public:
         //nop
     }
 
-    //override
-    void initialize( const osgDB::Options* dbOptions )
-    {        
-        FeatureSource::initialize( dbOptions );
-
-        _dbOptions = dbOptions ? osg::clone(dbOptions) : 0L;
-        std::string fullFilename = _options.url()->full();
-
-        int rc = sqlite3_open_v2( fullFilename.c_str(), &_database, SQLITE_OPEN_READONLY, 0L );
-        if ( rc != 0 )
-        {          
-            OE_WARN << LC << "Failed to open database " << sqlite3_errmsg(_database);
-        }
-    }
-
-
-    /** Called once at startup to create the profile for this feature set. Successful profile
-        creation implies that the datasource opened succesfully. */
-    const FeatureProfile* createFeatureProfile()
-    {
-        const osgEarth::Profile* profile = osgEarth::Registry::instance()->getSphericalMercatorProfile();
-        FeatureProfile* result = new FeatureProfile(profile->getExtent());
-        result->setTiled(true);
-        std::string minLevelStr, maxLevelStr;
-        if (getMetaData("minzoom", minLevelStr) && getMetaData("maxzoom", maxLevelStr))
-        {
-            _minLevel = as<int>(minLevelStr, 0);
-            _maxLevel = as<int>(maxLevelStr, 0);
-            OE_NOTICE << LC << "Got levels from metadata " << _minLevel << ", " << _maxLevel << std::endl;
-        }
-        else
-        {            
-            computeLevels();
-            OE_NOTICE << LC << "Got levels from database " << _minLevel << ", " << _maxLevel << std::endl;
-        }
-
-
-        result->setFirstLevel(_minLevel);
-        result->setMaxLevel(_maxLevel);
-        result->setProfile(profile);
-        result->geoInterp() = osgEarth::GEOINTERP_GREAT_CIRCLE;
-        return result;
-    }
-
     FeatureCursor* createFeatureCursor( const Symbology::Query& query )
     {
+        if (!query.tileKey().isSet())
+        {
+            OE_WARN << LC << "No tile key in query; no features will be returned\n";
+            return 0L;
+        }
+
         TileKey key = *query.tileKey();
 
         int z = key.getLevelOfDetail();
@@ -156,7 +119,18 @@ public:
         sqlite3_finalize( select );
 
         // apply filters before returning.
-        applyFilters( features );
+        applyFilters( features, query.tileKey()->getExtent() );
+
+        // If we have any features and we have an fid attribute, override the fid of the features
+        if (_options.fidAttribute().isSet())
+        {
+            for (FeatureList::iterator itr = features.begin(); itr != features.end(); ++itr)
+            {
+                std::string attr = itr->get()->getString(_options.fidAttribute().get());                
+                FeatureID fid = as<long>(attr, 0);
+                itr->get()->setFID( fid );
+            }
+        }
 
         if (!features.empty())
         {
@@ -258,6 +232,50 @@ public:
         OE_DEBUG << LC << "Computing levels took " << osg::Timer::instance()->delta_s(startTime, endTime ) << " s" << std::endl;
     }
 
+protected:
+    //override
+    Status initialize(const osgDB::Options* readOptions)
+    {
+        _dbOptions = Registry::cloneOrCreateOptions(readOptions);
+        std::string fullFilename = _options.url()->full();
+
+        int rc = sqlite3_open_v2( fullFilename.c_str(), &_database, SQLITE_OPEN_READONLY, 0L );
+        if ( rc != 0 )
+        {          
+            return Status::Error(Status::ResourceUnavailable, Stringify() << "Failed to open database, " << sqlite3_errmsg(_database));
+        }
+
+        setFeatureProfile(createFeatureProfile());
+
+        return Status::OK();
+    }
+
+private:
+    const FeatureProfile* createFeatureProfile()
+    {
+        const osgEarth::Profile* profile = osgEarth::Registry::instance()->getSphericalMercatorProfile();
+        FeatureProfile* result = new FeatureProfile(profile->getExtent());
+        result->setTiled(true);
+        std::string minLevelStr, maxLevelStr;
+        if (getMetaData("minzoom", minLevelStr) && getMetaData("maxzoom", maxLevelStr))
+        {
+            _minLevel = as<int>(minLevelStr, 0);
+            _maxLevel = as<int>(maxLevelStr, 0);
+            OE_NOTICE << LC << "Got levels from metadata " << _minLevel << ", " << _maxLevel << std::endl;
+        }
+        else
+        {            
+            computeLevels();
+            OE_NOTICE << LC << "Got levels from database " << _minLevel << ", " << _maxLevel << std::endl;
+        }
+
+
+        result->setFirstLevel(_minLevel);
+        result->setMaxLevel(_maxLevel);
+        result->setProfile(profile);
+        result->geoInterp() = osgEarth::GEOINTERP_GREAT_CIRCLE;
+        return result;
+    }
 
 
 private:
@@ -279,7 +297,7 @@ public:
         supportsExtension( "osgearth_feature_mapnikvectortiles", "Mapnik Vector Tiles feature driver for osgEarth" );
     }
 
-    virtual const char* className()
+    virtual const char* className() const
     {
         return "Mapnik Vector Tiles Feature Reader";
     }

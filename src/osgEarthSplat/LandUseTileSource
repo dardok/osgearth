@@ -1,6 +1,6 @@
 /* -*-c++-*- */
 /* osgEarth - Dynamic map generation toolkit for OpenSceneGraph
- * Copyright 2015 Pelican Mapping
+ * Copyright 2016 Pelican Mapping
  * http://osgearth.org
  *
  * osgEarth is free software; you can redistribute it and/or modify
@@ -139,6 +139,8 @@ namespace osgEarth { namespace Splat
         // Create an image.
         osg::Image* createImage(const osgEarth::TileKey& key, osgEarth::ProgressCallback* progress);
 
+        CachePolicy getCachePolicyHint() const;
+
     protected:
         virtual ~LandUseTileSource() { }
 
@@ -161,7 +163,7 @@ namespace osgEarth { namespace Splat
             supportsExtension( "osgearth_landuse", "Land Use Driver" );
         }
 
-        virtual const char* className()
+        virtual const char* className() const
         {
             return "Land Use Driver";
         }

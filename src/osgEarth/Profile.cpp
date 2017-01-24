@@ -1,6 +1,6 @@
 /* -*-c++-*- */
 /* osgEarth - Dynamic map generation toolkit for OpenSceneGraph
- * Copyright 2015 Pelican Mapping
+ * Copyright 2016 Pelican Mapping
  * http://osgearth.org
  *
  * osgEarth is free software; you can redistribute it and/or modify
@@ -23,6 +23,7 @@
 #include <osgEarth/Cube>
 #include <osgEarth/SpatialReference>
 #include <osgEarth/StringUtils>
+#include <osgEarth/Bounds>
 #include <osgDB/FileNameUtils>
 #include <algorithm>
 #include <sstream>
@@ -210,7 +211,30 @@ Profile::create(const std::string& srsInitString,
     }
     else if ( srs.valid() )
     {
-        OE_WARN << LC << "Failed to create profile; you must provide extents with a projected SRS." << std::endl;
+        OE_INFO << LC << "No extents given, making some up.\n";
+        Bounds bounds;
+        if (srs->guessBounds(bounds))
+        {
+            if (numTilesWideAtLod0 == 0 || numTilesHighAtLod0 == 0)
+            {
+                double ar = (bounds.width() / bounds.height());
+                if (ar >= 1.0) {
+                    int ari = (int)ar;
+                    numTilesHighAtLod0 = 1;
+                    numTilesWideAtLod0 = ari;
+                }
+                else {
+                    int ari = (int)(1.0/ar);
+                    numTilesWideAtLod0 = 1;
+                    numTilesHighAtLod0 = ari;
+                }
+            }            
+            return Profile::create(srs.get(), bounds.xMin(), bounds.yMin(), bounds.xMax(), bounds.yMax(), numTilesWideAtLod0, numTilesHighAtLod0);
+        }
+        else
+        {
+            OE_WARN << LC << "Failed to create profile; you must provide extents with a projected SRS." << std::endl;
+        }
     }
     else
     {
@@ -514,7 +538,7 @@ Profile::getNumTiles(unsigned int lod, unsigned int& out_tiles_wide, unsigned in
 unsigned int
 Profile::getLevelOfDetailForHorizResolution( double resolution, int tileSize ) const
 {
-    if ( tileSize <= 0 || resolution <= 0.0 ) return 0;
+    if ( tileSize <= 0 || resolution <= 0.0 ) return 23;
 
     double tileRes = (_extent.width() / (double)_numTilesWideAtLod0) / (double)tileSize;
     unsigned int level = 0;
@@ -531,14 +555,22 @@ Profile::createTileKey( double x, double y, unsigned int level ) const
 {
     if ( _extent.contains( x, y ) )
     {
-        unsigned int tilesX = (unsigned int)_numTilesWideAtLod0 * (1 << (unsigned int)level);
-        unsigned int tilesY = (unsigned int)_numTilesHighAtLod0 * (1 << (unsigned int)level);
+        unsigned tilesX = _numTilesWideAtLod0 * (1 << (unsigned)level);
+        unsigned tilesY = _numTilesHighAtLod0 * (1 << (unsigned)level);
 
-        if (((_numTilesWideAtLod0 != 0) && ((tilesX / _numTilesWideAtLod0) != (1 << (unsigned int) level))) ||
-            ((_numTilesHighAtLod0 != 0) && ((tilesY / _numTilesHighAtLod0) != (1 << (unsigned int) level))))
-        {	// check for overflow condition
-            return (TileKey::INVALID);
-        }
+        // overflow checks:
+
+        if (_numTilesWideAtLod0 == 0u || ((tilesX / _numTilesWideAtLod0) != (1 << (unsigned)level)))
+            return TileKey::INVALID;
+
+        if (_numTilesHighAtLod0 == 0u || ((tilesY / _numTilesHighAtLod0) != (1 << (unsigned)level)))
+            return TileKey::INVALID;
+
+        //if (((_numTilesWideAtLod0 != 0) && ((tilesX / _numTilesWideAtLod0) != (1 << (unsigned int) level))) ||
+        //    ((_numTilesHighAtLod0 != 0) && ((tilesY / _numTilesHighAtLod0) != (1 << (unsigned int) level))))
+        //{	// check for overflow condition
+        //    return (TileKey::INVALID);
+        //}
 
         double rx = (x - _extent.xMin()) / _extent.width();
         int tileX = osg::clampBelow( (unsigned int)(rx * (double)tilesX), tilesX-1 );

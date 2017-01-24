@@ -1,6 +1,6 @@
 /* -*-c++-*- */
 /* osgEarth - Dynamic map generation toolkit for OpenSceneGraph
- * Copyright 2015 Pelican Mapping
+ * Copyright 2016 Pelican Mapping
  * http://osgearth.org
  *
  * osgEarth is free software; you can redistribute it and/or modify
@@ -37,6 +37,8 @@ _contextNode(contexNode)
 
     // not MT-safe (camera updates, etc)
     this->setDataVariance( osg::Object::DYNAMIC );
+
+    setName("SilverLining::SkyDrawable");;
 }
 
 void

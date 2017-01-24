@@ -25,6 +25,8 @@
 #include <osgEarth/Revisioning>
 #include <osgEarth/ThreadingUtils>
 #include <osgEarth/Containers>
+#include <osgEarth/ResourceReleaser>
+#include <osgEarth/TileRasterizer>
 
 #include "RexTerrainEngineOptions"
 #include "EngineContext"
@@ -33,18 +35,23 @@
 #include "GeometryPool"
 #include "Loader"
 #include "Unloader"
+#include "SelectionInfo"
+#include "SurfaceNode"
+#include "TileDrawable"
 
 #include <osg/Geode>
 #include <osg/NodeCallback>
 #include <osg/Uniform>
 #include <osg/Timer>
 
+#include <list>
+#include <map>
+#include <vector>
+
 using namespace osgEarth;
 
 namespace osgEarth { namespace Drivers { namespace RexTerrainEngine
 {
-    class SelectionInfo;
-
     class RexTerrainEngineNode : public TerrainEngineNode
     {
     public:
@@ -69,29 +76,22 @@ namespace osgEarth { namespace Drivers { namespace RexTerrainEngine
 
     public: // internal TerrainEngineNode
 
-        virtual void preInitialize( const Map* map, const TerrainOptions& options );
-        virtual void postInitialize( const Map* map, const TerrainOptions& options );
-        virtual const TerrainOptions& getTerrainOptions() const { return _terrainOptions; }
-        virtual osg::BoundingSphere computeBound() const;
+        void setMap(const Map* map, const TerrainOptions& options);
+        const TerrainOptions& getTerrainOptions() const { return _terrainOptions; }
+        UID getUID() const { return _uid; }
 
     public: // osg::Node
 
         void traverse(osg::NodeVisitor& nv);
 
+        osg::BoundingSphere computeBound() const;
+
     public: // MapCallback adapter functions
 
-        void onMapInfoEstablished( const MapInfo& mapInfo ); // not virtual!
         void onMapModelChanged( const MapModelChange& change ); // not virtual!
 
-        UID getUID() const;
-
-    public: // statics    
-        static void registerEngine( RexTerrainEngineNode* engineNode );
-        static void unregisterEngine( UID uid );
-        static void getEngineByUID( UID uid, osg::ref_ptr<RexTerrainEngineNode>& output );
-
         /** Access to the asychronous data loader */
-        Loader* getLoader() { return _loader.get(); }
+        Loader* getLoader() const { return _loader.get(); }
 
     public:
         class ElevationChangedCallback : public ElevationLayerCallback
@@ -122,15 +122,14 @@ namespace osgEarth { namespace Drivers { namespace RexTerrainEngine
         // Reloads all the tiles in the terrain due to a data model change
         void refresh(bool force =false);
 
-        void addImageLayer( ImageLayer* layer );
         void addElevationLayer( ElevationLayer* layer );
+        void addTileLayer( Layer* layer );
 
         void removeImageLayer( ImageLayer* layerRemoved );
         void removeElevationLayer( ElevationLayer* layerRemoved );
         void toggleElevationLayer( ElevationLayer* layer );
 
-        void moveImageLayer( unsigned int oldIndex, unsigned int newIndex );
-        void moveElevationLayer( unsigned int oldIndex, unsigned int newIndex );
+        void moveElevationLayer( ElevationLayer* layerMoved );
         
         void updateState(); 
 
@@ -155,14 +154,15 @@ namespace osgEarth { namespace Drivers { namespace RexTerrainEngine
 
         osg::ref_ptr<ElevationChangedCallback> _elevationCallback;
 
-        MapFrame* _update_mapf; // map frame for the main/update traversal thread
+        MapFrame _mapFrame;
 
         // node registry is shared across all threads.
         osg::ref_ptr<TileNodeRegistry> _liveTiles;      // tiles in the scene graph.
-        osg::ref_ptr<TileNodeRegistry> _deadTiles;      // tiles that used to be in the scene graph.
-
-        PerThread< osg::ref_ptr<EngineContext> > _perThreadTileGroupFactories;
-        EngineContext* getEngineContext();
+        osg::ref_ptr<ResourceReleaser> _releaser;
+     
+        EngineContext* getEngineContext() const { return _engineContext.get(); }
+        osg::ref_ptr< EngineContext > _engineContext;
+        //OpenThreads::Mutex _engineContextMutex;
 
         osg::Timer _timer;
         unsigned   _tileCount;
@@ -171,21 +171,19 @@ namespace osgEarth { namespace Drivers { namespace RexTerrainEngine
         osg::ref_ptr<GeometryPool> _geometryPool;
         osg::ref_ptr<LoaderGroup>  _loader;
         osg::ref_ptr<UnloaderGroup> _unloader;
+        TileRasterizer* _rasterizer;
         
         osg::ref_ptr<osg::Group> _terrain;
 
-        Threading::Mutex _renderBinMutex;
-        osg::ref_ptr<osgUtil::RenderBin> _surfaceRenderBinPrototype;
-
-        bool _quickReleaseInstalled;
+        bool _renderModelUpdateRequired;
 
         RexTerrainEngineNode( const RexTerrainEngineNode& rhs, const osg::CopyOp& op =osg::CopyOp::DEEP_COPY_ALL ) { }
 
-        SelectionInfo* _selectionInfo;
-        void buildSelectionInfo(void);
-        void destroySelectionInfo(void);
+        SelectionInfo _selectionInfo;
 
-        osg::ref_ptr<osg::StateSet> _surfaceSS;
+        osg::ref_ptr<osg::StateSet> _imageLayerStateSet;
+
+        osg::ref_ptr<ModifyBoundingBoxCallback> _modifyBBoxCallback;
     };
 
 } } } // namespace osgEarth::Drivers::RexTerrainEngine

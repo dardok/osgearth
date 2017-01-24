@@ -1,6 +1,6 @@
 /* -*-c++-*- */
 /* osgEarth - Dynamic map generation toolkit for OpenSceneGraph
-* Copyright 2015 Pelican Mapping
+* Copyright 2016 Pelican Mapping
 * http://osgearth.org
 *
 * osgEarth is free software; you can redistribute it and/or modify
@@ -111,7 +111,6 @@ namespace osgEarth { namespace Annotation
         void setStyle( const Style& style );
         const Style& getStyle() const { return _style; }
 
-
     public: // GeoPositionNode override
 
         virtual void setPriority( float value );
@@ -119,13 +118,16 @@ namespace osgEarth { namespace Annotation
 
         virtual Config getConfig() const;
 
-        virtual void traverse(osg::NodeVisitor &nv);
+        virtual void dirty();
+
+    protected: // AnnotationNode override
+        
+        virtual bool supportsRenderBinDetails() const { return false; }
 
     protected:
 
         virtual ~PlaceNode() { }
-        
-    private:
+
         osg::ref_ptr<osg::Image>           _image;
         std::string                        _text;
         Style                              _style;
@@ -136,15 +138,21 @@ namespace osgEarth { namespace Annotation
         /** rotation of the label **/
         float                    _labelRotationRad;
         bool                     _followFixedCourse;
+        GeoPoint                 _geoPointLoc;
         GeoPoint                 _geoPointProj;
 
         void init();
+        void updateLayoutData();
 
+    public:
         // required by META_Node, but this object is not cloneable
-        PlaceNode() { }
+        PlaceNode();
+
+        void setConfig(const Config& conf);
+
+    private:
         PlaceNode(const PlaceNode& rhs, const osg::CopyOp& op =osg::CopyOp::DEEP_COPY_ALL) : GeoPositionNode(rhs, op) { }
 
-        void updateLayoutData();
     };
 
 } } // namespace osgEarth::Annotation

@@ -1,6 +1,6 @@
 /* -*-c++-*- */
 /* osgEarth - Dynamic map generation toolkit for OpenSceneGraph
- * Copyright 2015 Pelican Mapping
+ * Copyright 2016 Pelican Mapping
  * http://osgearth.org
  *
  * osgEarth is free software; you can redistribute it and/or modify
@@ -29,8 +29,6 @@
 
 namespace osgEarth
 {
-    using namespace osgEarth;
-
     /**
      * Utility that takes existing OSG geometry and modifies it so that
      * it "conforms" with a terrain patch.
@@ -59,7 +57,7 @@ namespace osgEarth
 
     public: // osg::NodeVisitor
 
-        void apply( osg::Geode& );
+        void apply( osg::Drawable& );
         void apply( osg::Transform& );
 
     protected:

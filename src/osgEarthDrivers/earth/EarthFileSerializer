@@ -1,6 +1,6 @@
 /* -*-c++-*- */
 /* osgEarth - Dynamic map generation toolkit for OpenSceneGraph
- * Copyright 2015 Pelican Mapping
+ * Copyright 2016 Pelican Mapping
  * http://osgearth.org
  *
  * osgEarth is free software; you can redistribute it and/or modify
@@ -60,7 +60,7 @@ namespace osgEarth_osgearth
          * referrer = the location from which the Config was created; typically this
          * is the pathname of the .earth file.
          */
-        MapNode* deserialize( const Config& conf, const std::string& referrer ) const;
+        osg::Node* deserialize( const Config& conf, const std::string& referrer ) const;
         
         /**
          * Create a Config structure representing a MapNode.

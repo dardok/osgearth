@@ -1,6 +1,6 @@
 /* -*-c++-*- */
 /* osgEarth - Dynamic map generation toolkit for OpenSceneGraph
- * Copyright 2015 Pelican Mapping
+ * Copyright 2016 Pelican Mapping
  * http://osgearth.org
  *
  * osgEarth is free software; you can redistribute it and/or modify
@@ -45,7 +45,8 @@ void osgEarth::removeEventHandler(osgViewer::View* view, osgGA::GUIEventHandler*
 PixelAutoTransform::PixelAutoTransform() :
 osg::AutoTransform         (),
 _rotateInScreenSpace       ( false ),
-_screenSpaceRotationRadians( 0.0 )
+_screenSpaceRotationRadians( 0.0 ),
+_dirty( true )
 {
     // deactivate culling for the first traversal. We will reactivate it later.
     setCullingActive( false );
@@ -445,63 +446,38 @@ GeometryValidator::apply(osg::Geometry& geom)
         return;
     }
 
-#if OSG_VERSION_GREATER_OR_EQUAL(3,1,9)
-
     std::set<osg::BufferObject*> _vbos;
 
     osg::Geometry::ArrayList arrays;
     geom.getArrayList(arrays);
+
     for(unsigned i=0; i<arrays.size(); ++i)
     {
         osg::Array* a = arrays[i].get();
-        if ( a == NULL )
+        if ( a )
+        {
+            if ( a->getBinding() == a->BIND_OVERALL && a->getNumElements() != 1 )
+            {
+                OE_NOTICE << LC << "Found an array with BIND_OVERALL and size <> 1\n";
+            }
+            else if ( a->getBinding() == a->BIND_PER_VERTEX && a->getNumElements() != numVerts )
+            {
+                OE_NOTICE << LC << "Found BIND_PER_VERTEX with wrong number of elements (expecting " << numVerts << "; found " << a->getNumElements() << ")\n";
+            }
+
+            _vbos.insert( a->getVertexBufferObject() );
+        }
+        else
         {
             OE_NOTICE << LC << "Found a NULL array\n";
         }
-        else if ( a->getBinding() == a->BIND_OVERALL && a->getNumElements() != 1 )
-        {
-            OE_NOTICE << LC << "Found an array with BIND_OVERALL and size <> 1\n";
-        }
-        else if ( a->getBinding() == a->BIND_PER_VERTEX && a->getNumElements() != numVerts )
-        {
-            OE_NOTICE << LC << "Found BIND_PER_VERTEX with wrong number of elements (expecting " << numVerts << "; found " << a->getNumElements() << ")\n";
-        }
 
-        _vbos.insert( a->getVertexBufferObject() );
     }
 
     if ( _vbos.size() != 1 )
     {
         OE_NOTICE << LC << "Found a Geometry that uses more than one VBO (non-optimal sharing)\n";
     }
-
-#else // pre-3.1.9 ... phase out.
-
-    if ( geom.getColorArray() )
-    {
-        if ( geom.getColorBinding() == osg::Geometry::BIND_OVERALL && geom.getColorArray()->getNumElements() != 1 )
-        {
-            OE_NOTICE << "Color: BIND_OVERALL with wrong number of elements" << std::endl;
-        }
-        else if ( geom.getColorBinding() == osg::Geometry::BIND_PER_VERTEX && geom.getColorArray()->getNumElements() != numVerts )
-        {
-            OE_NOTICE << "Color: BIND_PER_VERTEX with colors.size != verts.size" << std::endl;
-        }
-    }
-
-    if ( geom.getNormalArray() )
-    {
-        if ( geom.getNormalBinding() == osg::Geometry::BIND_OVERALL && geom.getNormalArray()->getNumElements() != 1 )
-        {
-            OE_NOTICE << "Normal: BIND_OVERALL with wrong number of elements" << std::endl;
-        }
-        else if ( geom.getNormalBinding() == osg::Geometry::BIND_PER_VERTEX && geom.getNormalArray()->getNumElements() != numVerts )
-        {
-            OE_NOTICE << "Normal: BIND_PER_VERTEX with normals.size != verts.size" << std::endl;
-        }
-    }
-
-#endif
 
     const osg::Geometry::PrimitiveSetList& plist = geom.getPrimitiveSetList();
     

@@ -1,6 +1,6 @@
 /* -*_maxPolyTilingAngle_deg-c++-*- */
 /* osgEarth - Dynamic map generation toolkit for OpenSceneGraph
- * Copyright 2015 Pelican Mapping
+ * Copyright 2016 Pelican Mapping
  * http://osgearth.org
  *
  * osgEarth is free software; you can redistribute it and/or modify
@@ -35,8 +35,6 @@
 #include <osg/LineWidth>
 #include <osg/LineStipple>
 #include <osg/Point>
-#include <osg/Depth>
-#include <osg/PolygonOffset>
 #include <osg/MatrixTransform>
 #include <osgText/Text>
 #include <osgUtil/Tessellator>
@@ -109,14 +107,16 @@ BuildGeometryFilter::processPolygons(FeatureList& features, FilterContext& conte
 
     bool makeECEF = false;
     const SpatialReference* featureSRS = 0L;
-    const SpatialReference* mapSRS = 0L;
+    //const SpatialReference* mapSRS = 0L;
+    const SpatialReference* outputSRS = 0L;
 
     // set up the reference system info:
     if ( context.isGeoreferenced() )
     {
-        makeECEF   = context.getSession()->getMapInfo().isGeocentric();
+        //makeECEF   = context.getSession()->getMapInfo().isGeocentric();
         featureSRS = context.extent()->getSRS();
-        mapSRS     = context.getSession()->getMapInfo().getProfile()->getSRS();
+        outputSRS  = context.getOutputSRS(); //getSession()->getMapInfo().getProfile()->getSRS();
+        makeECEF   = context.getOutputSRS()->isGeographic();
     }
 
     for( FeatureList::iterator f = features.begin(); f != features.end(); ++f )
@@ -190,7 +190,7 @@ BuildGeometryFilter::processPolygons(FeatureList& features, FilterContext& conte
                 hats->push_back( i->z() );
 
             // build the geometry:
-            tileAndBuildPolygon(part, featureSRS, mapSRS, makeECEF, true, osgGeom, w2l);
+            tileAndBuildPolygon(part, featureSRS, outputSRS, makeECEF, true, osgGeom, w2l);
             //buildPolygon(part, featureSRS, mapSRS, makeECEF, true, osgGeom, w2l);
 
             osg::Vec3Array* allPoints = static_cast<osg::Vec3Array*>(osgGeom->getVertexArray());
@@ -264,13 +264,15 @@ BuildGeometryFilter::processPolygonizedLines(FeatureList&   features,
     // establish some referencing
     bool                    makeECEF   = false;
     const SpatialReference* featureSRS = 0L;
-    const SpatialReference* mapSRS     = 0L;
+    const SpatialReference* outputSRS  = 0L;
 
     if ( context.isGeoreferenced() )
     {
-        makeECEF   = context.getSession()->getMapInfo().isGeocentric();
+        //makeECEF   = context.getSession()->getMapInfo().isGeocentric();
         featureSRS = context.extent()->getSRS();
-        mapSRS     = context.getSession()->getMapInfo().getProfile()->getSRS();
+        outputSRS = context.getOutputSRS();
+        makeECEF = outputSRS->isGeographic();
+        //mapSRS     = context.getSession()->getMapInfo().getProfile()->getSRS();
     }
 
     // iterate over all features.
@@ -322,7 +324,7 @@ BuildGeometryFilter::processPolygonizedLines(FeatureList&   features,
             // a local reference point.
             osg::ref_ptr<osg::Vec3Array> verts   = new osg::Vec3Array();
             osg::ref_ptr<osg::Vec3Array> normals = new osg::Vec3Array();
-            transformAndLocalize( part->asVector(), featureSRS, verts.get(), normals.get(), mapSRS, _world2local, makeECEF );
+            transformAndLocalize( part->asVector(), featureSRS, verts.get(), normals.get(), outputSRS, _world2local, makeECEF );
 
             // turn the lines into polygons.
             osg::Geometry* geom = polygonizer( verts.get(), normals.get(), twosided );
@@ -357,14 +359,15 @@ BuildGeometryFilter::processLines(FeatureList& features, FilterContext& context)
 
     bool makeECEF = false;
     const SpatialReference* featureSRS = 0L;
-    const SpatialReference* mapSRS = 0L;
+    const SpatialReference* outputSRS = 0L;
 
     // set up referencing information:
     if ( context.isGeoreferenced() )
     {
-        makeECEF   = context.getSession()->getMapInfo().isGeocentric();
+        //makeECEF   = context.getSession()->getMapInfo().isGeocentric();
         featureSRS = context.extent()->getSRS();
-        mapSRS     = context.getSession()->getMapInfo().getProfile()->getSRS();
+        outputSRS  = context.getOutputSRS();
+        makeECEF = outputSRS->isGeographic();
     }
 
     for( FeatureList::iterator f = features.begin(); f != features.end(); ++f )
@@ -422,7 +425,7 @@ BuildGeometryFilter::processLines(FeatureList& features, FilterContext& context)
             // build the geometry:
             osg::Vec3Array* allPoints = new osg::Vec3Array();
 
-            transformAndLocalize( part->asVector(), featureSRS, allPoints, mapSRS, _world2local, makeECEF );
+            transformAndLocalize( part->asVector(), featureSRS, allPoints, outputSRS, _world2local, makeECEF );
 
             osgGeom->addPrimitiveSet( new osg::DrawArrays(primMode, 0, allPoints->getNumElements()) );
             osgGeom->setVertexArray( allPoints );
@@ -482,14 +485,15 @@ BuildGeometryFilter::processPoints(FeatureList& features, FilterContext& context
 
     bool makeECEF = false;
     const SpatialReference* featureSRS = 0L;
-    const SpatialReference* mapSRS = 0L;
+    const SpatialReference* outputSRS = 0L;
 
     // set up referencing information:
     if ( context.isGeoreferenced() )
     {
-        makeECEF   = context.getSession()->getMapInfo().isGeocentric();
+        //makeECEF   = context.getSession()->getMapInfo().isGeocentric();
         featureSRS = context.extent()->getSRS();
-        mapSRS     = context.getSession()->getMapInfo().getProfile()->getSRS();
+        outputSRS  = context.getOutputSRS();
+        makeECEF = outputSRS->isGeographic();
     }
 
     for( FeatureList::iterator f = features.begin(); f != features.end(); ++f )
@@ -532,7 +536,7 @@ BuildGeometryFilter::processPoints(FeatureList& features, FilterContext& context
             // build the geometry:
             osg::Vec3Array* allPoints = new osg::Vec3Array();
 
-            transformAndLocalize( part->asVector(), featureSRS, allPoints, mapSRS, _world2local, makeECEF );
+            transformAndLocalize( part->asVector(), featureSRS, allPoints, outputSRS, _world2local, makeECEF );
 
             osgGeom->addPrimitiveSet( new osg::DrawArrays(GL_POINTS, 0, allPoints->getNumElements()) );
             osgGeom->setVertexArray( allPoints );
@@ -792,7 +796,7 @@ void prepareForTesselation(Geometry* geometry, const SpatialReference* featureSR
 void
 BuildGeometryFilter::tileAndBuildPolygon(Geometry*               ring,
                                          const SpatialReference* featureSRS,
-                                         const SpatialReference* mapSRS,
+                                         const SpatialReference* outputSRS,
                                          bool                    makeECEF,
                                          bool                    tessellate,
                                          osg::Geometry*          osgGeom,
@@ -806,21 +810,24 @@ BuildGeometryFilter::tileAndBuildPolygon(Geometry*               ring,
         OE_WARN << LC << "Ring is NULL.\n";
         return;
     }
-
+    
     // Tile the incoming polygon if necessary
+    // NB: this breaks down at higher latitudes; see https://github.com/gwaldron/osgearth/issues/746
+
     GeometryCollection tiles;
-    prepareForTesselation( ring, featureSRS, _maxPolyTilingAngle_deg.get(), MAX_POINTS_PER_CROP_TILE, tiles);    
-    //tiles.push_back( ring );
+    if (_maxPolyTilingAngle_deg.isSet())
+        prepareForTesselation( ring, featureSRS, _maxPolyTilingAngle_deg.get(), MAX_POINTS_PER_CROP_TILE, tiles);    
+    else
+        tiles.push_back( ring );
 
     osg::ref_ptr<osg::Geode> geode = new osg::Geode;
 
-    OE_TEST << LC << "TABP: tiles = " << tiles.size() << "\n";
+    //OE_NOTICE << LC << "TABP: tiles = " << tiles.size() << "\n";
 
     // Process each ring independently
     for (int ringIndex = 0; ringIndex < tiles.size(); ringIndex++)
     {
         Geometry* geom = tiles[ringIndex].get();
-        //Ring* geom = dynamic_cast< Ring*>(tiles[ringIndex].get());
         if (geom)
         {
             // temporary target geometry for this cell:
@@ -829,12 +836,12 @@ BuildGeometryFilter::tileAndBuildPolygon(Geometry*               ring,
 
             // establish a local plane for this cell based on its centroid:
             GeoPoint cellCenter(featureSRS, geom->getBounds().center());
-            cellCenter.transform(mapSRS, cellCenter);                        
+            cellCenter.transform(outputSRS, cellCenter);                        
             osg::Matrix world2cell;
             cellCenter.createWorldToLocal( world2cell );
 
             // build the localized polygon:
-            buildPolygon(geom, featureSRS, mapSRS, makeECEF, tessellate, temp.get(), world2cell);
+            buildPolygon(geom, featureSRS, outputSRS, makeECEF, temp.get(), world2cell);
 
             // if successful, transform the verts back into our master LTP:
             if ( temp->getNumPrimitiveSets() > 0 )
@@ -887,12 +894,15 @@ BuildGeometryFilter::tileAndBuildPolygon(Geometry*               ring,
                 if (g)
                 {
                     osg::Vec3Array* verts = dynamic_cast<osg::Vec3Array*>(g->getVertexArray());
-                    OE_WARN << "Geometry " << i << " has " << verts->size() << " verts" << std::endl;
-                    OE_WARN << "Geometry " << i << " has " << g->getNumPrimitiveSets() << " primitive sets" << std::endl;
-                    for (unsigned int j = 0; j < g->getNumPrimitiveSets(); j++)
+                    if (verts)
                     {
-                        osg::PrimitiveSet* ps = g->getPrimitiveSet(j);
-                        OE_WARN << "PrimitiveSet " << j << ps->className() << std::endl;
+                        OE_WARN << "Geometry " << i << " has " << verts->size() << " verts" << std::endl;
+                        OE_WARN << "Geometry " << i << " has " << g->getNumPrimitiveSets() << " primitive sets" << std::endl;
+                        for (unsigned int j = 0; j < g->getNumPrimitiveSets(); j++)
+                        {
+                            osg::PrimitiveSet* ps = g->getPrimitiveSet(j);
+                            OE_WARN << "PrimitiveSet " << j << ps->className() << std::endl;
+                        }
                     }
                 }
             }
@@ -908,9 +918,8 @@ BuildGeometryFilter::tileAndBuildPolygon(Geometry*               ring,
 void
 BuildGeometryFilter::buildPolygon(Geometry*               ring,
                                   const SpatialReference* featureSRS,
-                                  const SpatialReference* mapSRS,
+                                  const SpatialReference* outputSRS,
                                   bool                    makeECEF,
-                                  bool                    tessellate,
                                   osg::Geometry*          osgGeom,
                                   const osg::Matrixd      &world2local)
 {
@@ -920,7 +929,7 @@ BuildGeometryFilter::buildPolygon(Geometry*               ring,
     ring->rewind(osgEarth::Symbology::Geometry::ORIENTATION_CCW);
 
     osg::ref_ptr<osg::Vec3Array> allPoints = new osg::Vec3Array();
-    transformAndLocalize( ring->asVector(), featureSRS, allPoints.get(), mapSRS, world2local, makeECEF );
+    transformAndLocalize( ring->asVector(), featureSRS, allPoints.get(), outputSRS, world2local, makeECEF );
 
     Polygon* poly = dynamic_cast<Polygon*>(ring);
     if ( poly )
@@ -936,7 +945,7 @@ BuildGeometryFilter::buildPolygon(Geometry*               ring,
                 hole->rewind(osgEarth::Symbology::Geometry::ORIENTATION_CW);
 
                 osg::ref_ptr<osg::Vec3Array> holePoints = new osg::Vec3Array();
-                transformAndLocalize( hole->asVector(), featureSRS, holePoints.get(), mapSRS, world2local, makeECEF );
+                transformAndLocalize( hole->asVector(), featureSRS, holePoints.get(), outputSRS, world2local, makeECEF );
 
                 // find the point with the highest x value
                 unsigned int hCursor = 0;
@@ -1180,9 +1189,12 @@ BuildGeometryFilter::push( FeatureList& input, FilterContext& context )
         osg::ref_ptr<osg::Geode> geode = processPolygons(polygons, context);
         if ( geode->getNumDrawables() > 0 )
         {
+            osgUtil::Optimizer::MergeGeometryVisitor mg;
+            mg.setTargetMaximumNumberOfVertices(65536);
+            geode->accept(mg);
+
             osgUtil::Optimizer o;
             o.optimize( geode.get(), 
-                osgUtil::Optimizer::MERGE_GEOMETRY |
                 osgUtil::Optimizer::INDEX_MESH |
                 osgUtil::Optimizer::VERTEX_PRETRANSFORM |
                 osgUtil::Optimizer::VERTEX_POSTTRANSFORM );
@@ -1198,12 +1210,24 @@ BuildGeometryFilter::push( FeatureList& input, FilterContext& context )
         osg::ref_ptr<osg::Geode> geode = processPolygonizedLines(polygonizedLines, twosided, context);
         if ( geode->getNumDrawables() > 0 )
         {
+            osgUtil::Optimizer::MergeGeometryVisitor mg;
+            mg.setTargetMaximumNumberOfVertices(65536);
+            geode->accept(mg);
+
             osgUtil::Optimizer o;
             o.optimize( geode.get(), 
-                osgUtil::Optimizer::MERGE_GEOMETRY |
                 osgUtil::Optimizer::INDEX_MESH |
                 osgUtil::Optimizer::VERTEX_PRETRANSFORM |
                 osgUtil::Optimizer::VERTEX_POSTTRANSFORM );
+
+            if (line->imageURI().isSet() && context.getSession() && context.getSession()->getResourceCache())
+            {
+                osg::ref_ptr<osg::Texture> tex;
+                if (context.getSession()->getResourceCache()->getOrCreateLineTexture(line->imageURI().get(), tex, context.getDBOptions()))
+                {
+                    geode->getOrCreateStateSet()->setTextureAttributeAndModes(0, tex.get(), 1);
+                }
+            }
 
             result->addChild( geode.get() );
         }
@@ -1215,9 +1239,9 @@ BuildGeometryFilter::push( FeatureList& input, FilterContext& context )
         osg::ref_ptr<osg::Geode> geode = processLines(lines, context);
         if ( geode->getNumDrawables() > 0 )
         {
-            osgUtil::Optimizer o;
-            o.optimize( geode.get(), 
-                osgUtil::Optimizer::MERGE_GEOMETRY );
+            osgUtil::Optimizer::MergeGeometryVisitor mg;
+            mg.setTargetMaximumNumberOfVertices(65536);
+            geode->accept(mg);
 
             applyLineSymbology( geode->getOrCreateStateSet(), line );
             result->addChild( geode.get() );
@@ -1230,9 +1254,9 @@ BuildGeometryFilter::push( FeatureList& input, FilterContext& context )
         osg::ref_ptr<osg::Geode> geode = processPoints(points, context);
         if ( geode->getNumDrawables() > 0 )
         {
-            osgUtil::Optimizer o;
-            o.optimize( geode.get(), 
-                osgUtil::Optimizer::MERGE_GEOMETRY );
+            osgUtil::Optimizer::MergeGeometryVisitor mg;
+            mg.setTargetMaximumNumberOfVertices(65536);
+            geode->accept(mg);
 
             applyPointSymbology( geode->getOrCreateStateSet(), point );
             result->addChild( geode.get() );

@@ -1,6 +1,6 @@
 /* -*-c++-*- */
 /* osgEarth - Dynamic map generation toolkit for OpenSceneGraph
- * Copyright 2015 Pelican Mapping
+ * Copyright 2016 Pelican Mapping
  * http://osgearth.org
  *
  * osgEarth is free software; you can redistribute it and/or modify
@@ -132,7 +132,7 @@ SpatialReference::createFromPROJ4( const std::string& proj4, const std::string& 
 	void* handle = OSRNewSpatialReference( NULL );
     if ( OSRImportFromProj4( handle, proj4.c_str() ) == OGRERR_NONE )
 	{
-        result = new SpatialReference( handle, "PROJ4" );
+        result = new SpatialReference( handle, std::string("PROJ4") );
 	}
 	else 
 	{
@@ -169,12 +169,21 @@ SpatialReference::createFromWKT( const std::string& wkt, const std::string& name
     osg::ref_ptr<SpatialReference> result;
     GDAL_SCOPED_LOCK;
     void* handle = OSRNewSpatialReference( NULL );
-    char buf[4096];
+    char buf[8192];
     char* buf_ptr = &buf[0];
-    strcpy( buf, wkt.c_str() );
+    if (wkt.length() < 8192)
+    {
+        strcpy( buf, wkt.c_str() );
+    }
+    else
+    {
+        OE_WARN << LC << "BUFFER OVERFLOW - INTERNAL ERROR\n";
+        return 0L;
+    }
+
     if ( OSRImportFromWkt( handle, &buf_ptr ) == OGRERR_NONE )
     {
-        result = new SpatialReference( handle, "WKT" );
+        result = new SpatialReference( handle, std::string("WKT") );
         result = result->fixWKT();
     }
     else 
@@ -193,7 +202,7 @@ SpatialReference::createFromUserInput( const std::string& input, const std::stri
     void* handle = OSRNewSpatialReference( NULL );
     if ( OSRSetFromUserInput( handle, input.c_str() ) == OGRERR_NONE )
     {
-        result = new SpatialReference( handle, "UserInput" );
+        result = new SpatialReference( handle, std::string("UserInput") );
     }
     else 
     {
@@ -405,7 +414,7 @@ SpatialReference::fixWKT()
 /****************************************************************************/
 
 
-SpatialReference::SpatialReference(void*              handle, 
+SpatialReference::SpatialReference(void* handle,
                                    const std::string& init_type) :
 osg::Referenced ( true ),
 _initialized    ( false ),
@@ -422,7 +431,8 @@ _is_contiguous  ( false ),
 _is_user_defined( false ),
 _is_ltp         ( false ),
 _is_plate_carre ( false ),
-_is_spherical_mercator( false )
+_is_spherical_mercator( false ),
+_ellipsoidId(0u)
 {
     // nop
 }
@@ -1620,4 +1630,34 @@ SpatialReference::_init()
     }
 
     _initialized = true;
+}
+
+bool
+SpatialReference::guessBounds(Bounds& bounds) const
+{
+    if (isGeographic())
+    {
+        bounds.set(-180.0, -90.0, 0.0, 180.0, 90.0, 0.0);
+        return true;
+    }
+    
+    if (isMercator() || isSphericalMercator())
+    {
+        bounds.set(MERC_MINX, MERC_MINY, 0.0, MERC_MAXX, MERC_MAXY, 0.0);
+        return true;
+    }
+
+    GDAL_SCOPED_LOCK;
+
+    int isNorth;
+    if (OSRGetUTMZone(_handle, &isNorth))
+    {
+        if (isNorth)
+            bounds.set(166000, 0, 0, 834000, 9330000, 0);
+        else
+            bounds.set(166000, 1116915, 0.0, 834000, 10000000, 0);
+        return true;
+    }
+
+    return false;
 }

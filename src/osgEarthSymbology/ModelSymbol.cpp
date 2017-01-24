@@ -1,6 +1,6 @@
 /* -*-c++-*- */
 /* osgEarth - Dynamic map generation toolkit for OpenSceneGraph
- * Copyright 2015 Pelican Mapping
+ * Copyright 2016 Pelican Mapping
  * http://osgearth.org
  *
  * osgEarth is free software; you can redistribute it and/or modify
@@ -173,10 +173,10 @@ ModelSymbol::parseSLD(const Config& c, Style& style)
         style.getOrCreate<ModelSymbol>()->name() = StringExpression(c.value());
     }
     else if ( match(c.key(), "model-max-size-x") ) {
-        //todo - may not need this.
+        style.getOrCreate<ModelSymbol>()->maxSizeX() = as<float>(c.value(), FLT_MAX);
     }
     else if ( match(c.key(), "model-max-size-y") ) {
-        //todo - may not need this.
+        style.getOrCreate<ModelSymbol>()->maxSizeY() = as<float>(c.value(), FLT_MAX);
     }
 }
 

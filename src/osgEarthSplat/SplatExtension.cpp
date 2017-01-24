@@ -1,6 +1,6 @@
 /* -*-c++-*- */
 /* osgEarth - Dynamic map generation toolkit for OpenSceneGraph
- * Copyright 2015 Pelican Mapping
+ * Copyright 2016 Pelican Mapping
  * http://osgearth.org
  *
  * osgEarth is free software; you can redistribute it and/or modify
@@ -18,10 +18,9 @@
  */
 #include "SplatExtension"
 #include "SplatCatalog"
-#include "Zone"
 #include "SplatCoverageLegend"
-#include "SplatTerrainEffect"
-#include "LandCoverTerrainEffect"
+#include "SplatLayerFactory"
+#include "NoiseTextureFactory"
 
 #include <osgEarth/MapNode>
 #include <osgEarth/TerrainEngineNode>
@@ -34,13 +33,16 @@ using namespace osgEarth::Splat;
 
 //.........................................................................
 
+REGISTER_OSGEARTH_EXTENSION(osgearth_splat, SplatExtension);
+
+
 SplatExtension::SplatExtension()
 {
     //nop
 }
 
 SplatExtension::SplatExtension(const SplatOptions& options) :
-_options( options )
+SplatOptions( options )
 {
     //nop
 }
@@ -68,11 +70,11 @@ SplatExtension::connect(MapNode* mapNode)
     OE_INFO << LC << "Connecting to MapNode.\n";
 
     // Coverage source data
-    osg::ref_ptr<Coverage> coverage;
-    if ( _options.coverage().isSet() )
+    osg::ref_ptr<Coverage> myCoverage;
+    if ( coverage().isSet() )
     {
-        coverage = new Coverage();
-        if ( !coverage->configure( _options.coverage().get(), mapNode->getMap(), _dbo.get() ) )
+        myCoverage = new Coverage();
+        if ( !myCoverage->configure( coverage().get(), mapNode->getMap(), _dbo.get() ) )
         {
             OE_WARN << LC << "Coverage is not properly configured; land cover disabled.\n";
             return false;
@@ -83,13 +85,13 @@ SplatExtension::connect(MapNode* mapNode)
     bool enableLandCoverEffect = false;
 
     // Zone definitions
-    Zones zones;
-    for(int i=0; i<_options.zones().size(); ++i)
+    Zones myZones;
+    for(int i=0; i<zones().size(); ++i)
     {
         osg::ref_ptr<Zone> zone = new Zone();
-        if ( zone->configure(_options.zones().at(i), mapNode->getMap(), _dbo.get()) )
+        if ( zone->configure(zones().at(i), mapNode->getMap(), _dbo.get()) )
         {
-            zones.push_back( zone.get() );
+            myZones.push_back( zone.get() );
 
             if ( zone->getSurface() != 0L )
             {
@@ -103,31 +105,44 @@ SplatExtension::connect(MapNode* mapNode)
         }
     }
 
+    // Install the noise texture that's used by both effects.
+    if (enableSurfaceEffect || enableLandCoverEffect)
+    {
+        osg::StateSet* terrainStateSet = mapNode->getTerrainEngine()->getOrCreateStateSet();
+
+        // reserve a texture unit:
+        if (mapNode->getTerrainEngine()->getResources()->reserveTextureImageUnit(_noiseTexUnit, "Splat Noise"))
+        {
+            NoiseTextureFactory noise;
+            terrainStateSet->setTextureAttribute(_noiseTexUnit, noise.create(256u, 4u));
+            terrainStateSet->addUniform(new osg::Uniform("oe_splat_noiseTex", _noiseTexUnit));
+        }
+    }
+
     if ( enableSurfaceEffect )
     {
         OE_INFO << LC << "Enabling the surface splatting effect\n";
-        _splatEffect = new SplatTerrainEffect();
-        _splatEffect->setDBOptions( _dbo.get() );
-        _splatEffect->setZones( zones );
-        _splatEffect->setCoverage( coverage.get() );
-
-        mapNode->getTerrainEngine()->addEffect( _splatEffect.get() );
+        _splatLayerFactory = new SplatLayerFactory();
+        _splatLayerFactory->setDBOptions( _dbo.get() );
+        _splatLayerFactory->setZones( myZones );
+        _splatLayerFactory->setCoverage( myCoverage.get() );
+        _splatLayerFactory->install(mapNode);
     }
 
     if ( enableLandCoverEffect )
     {
         OE_INFO << LC << "Enabling the land cover effect\n";
-        _landCoverEffect = new LandCoverTerrainEffect();
-        _landCoverEffect->setDBOptions( _dbo.get() );
-        _landCoverEffect->setZones( zones );
-        _landCoverEffect->setCoverage( coverage.get() );
-        
-        mapNode->getTerrainEngine()->addEffect( _landCoverEffect.get() );
+        _landCoverLayerFactory = new LandCoverLayerFactory();
+        _landCoverLayerFactory->setDBOptions( _dbo.get() );
+        _landCoverLayerFactory->setZones( myZones );
+        _landCoverLayerFactory->setCoverage( myCoverage.get() );
+        _landCoverLayerFactory->install(mapNode);
     }
 
     // Install the zone switcher; this will select the best zone based on
     // the camera position.
-    mapNode->getTerrainEngine()->addCullCallback( new ZoneSwitcher(zones) );
+    _zoneSwitcher = new ZoneSwitcher(myZones);
+    mapNode->getTerrainEngine()->addCullCallback( _zoneSwitcher.get() );
 
     return true;
 }
@@ -137,16 +152,23 @@ SplatExtension::disconnect(MapNode* mapNode)
 {
     if ( mapNode )
     {
-        if ( _splatEffect.valid() )
+        if ( _splatLayerFactory.valid() )
         {
-            mapNode->getTerrainEngine()->removeEffect( _splatEffect.get() );
-            _splatEffect = 0L;
+            _splatLayerFactory->uninstall(mapNode);
+            _splatLayerFactory = 0L;
         }
 
-        if ( _landCoverEffect.valid() )
+        if ( _landCoverLayerFactory.valid() )
         {
-            mapNode->getTerrainEngine()->removeEffect( _landCoverEffect.get() );
-            _landCoverEffect = 0L;
+            _landCoverLayerFactory->uninstall(mapNode);
+            _landCoverLayerFactory = 0L;
+        }
+
+        mapNode->getTerrainEngine()->removeCullCallback( _zoneSwitcher.get() );
+
+        if (_noiseTexUnit >= 0)
+        {
+            mapNode->getTerrainEngine()->getResources()->releaseTextureImageUnit(_noiseTexUnit);
         }
     }
 
@@ -156,12 +178,12 @@ SplatExtension::disconnect(MapNode* mapNode)
 bool
 SplatExtension::connect(Control* control)
 {
-    //TODO add a UI.
-    Container* container = dynamic_cast<Container*>(control);
-    if ( container )
-    {
-        container->addControl( new LabelControl("Prodecural Terrain Extension Active") );
-    }
+    ////TODO add a UI.
+    //Container* container = dynamic_cast<Container*>(control);
+    //if ( container )
+    //{
+    //    container->addControl( new LabelControl("Prodecural Terrain Extension Active") );
+    //}
     return true;
 }
 

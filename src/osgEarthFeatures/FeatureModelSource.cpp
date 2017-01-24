@@ -1,6 +1,6 @@
 /* -*-c++-*- */
 /* osgEarth - Dynamic map generation toolkit for OpenSceneGraph
- * Copyright 2015 Pelican Mapping
+ * Copyright 2016 Pelican Mapping
  * http://osgearth.org
  *
  * osgEarth is free software; you can redistribute it and/or modify
@@ -24,6 +24,7 @@
 #include <osgEarth/Registry>
 #include <osgEarth/Capabilities>
 #include <osgEarth/DrapeableNode>
+#include <osgEarth/Lighting>
 #include <osg/Notify>
 
 using namespace osgEarth;
@@ -119,10 +120,11 @@ FeatureModelSource::setFeatureSource( FeatureSource* source )
     }
 }
 
-void 
-FeatureModelSource::initialize(const osgDB::Options* dbOptions)
+Status
+FeatureModelSource::initialize(const osgDB::Options* readOptions)
 {
-    ModelSource::initialize( dbOptions );
+    if (readOptions)
+        setReadOptions(readOptions);
     
     // the data source from which to pull features:
     if ( _options.featureSource().valid() )
@@ -132,36 +134,46 @@ FeatureModelSource::initialize(const osgDB::Options* dbOptions)
     else if ( _options.featureOptions().isSet() )
     {
         _features = FeatureSourceFactory::create( _options.featureOptions().value() );
-        if ( !_features.valid() )
-        {
-            OE_WARN << LC << "No valid feature source provided!" << std::endl;
-        }
     }
 
-    // initialize the feature source if it exists:
-    if ( _features.valid() )
-    {
-        _features->initialize( dbOptions );
+    if (!_features.valid())
+        return Status::Error(Status::ServiceUnavailable, "Failed to create a feature driver");
 
-        // Try to fill the DataExtent list using the FeatureProfile
-        const FeatureProfile* featureProfile = _features->getFeatureProfile();
-        if (featureProfile != NULL)
-        {
-            if (featureProfile->getProfile() != NULL)
-            {
-                // Use specified profile's GeoExtent
-                getDataExtents().push_back(DataExtent(featureProfile->getProfile()->getExtent()));
-            }
-            else if (featureProfile->getExtent().isValid() == true)
-            {
-                // Use FeatureProfile's GeoExtent
-                getDataExtents().push_back(DataExtent(featureProfile->getExtent()));
-            }
-        }
-    }
-    else
+    // open the feature source if it exists:
+    const Status& featuresStatus = _features->open(_readOptions.get());
+    if (featuresStatus.isError())
+        return featuresStatus;
+
+    // Try to fill the DataExtent list using the FeatureProfile
+    const FeatureProfile* featureProfile = _features->getFeatureProfile();
+    if (featureProfile == NULL)
+        return Status::Error("Failed to establish a feature profile");
+
+    if (featureProfile->getProfile() != NULL)
     {
-        OE_WARN << LC << "No FeatureSource; nothing will be rendered (" << getName() << ")" << std::endl;
+        // Use specified profile's GeoExtent
+        getDataExtents().push_back(DataExtent(featureProfile->getProfile()->getExtent()));
+    }
+    else if (featureProfile->getExtent().isValid() == true)
+    {
+        // Use FeatureProfile's GeoExtent
+        getDataExtents().push_back(DataExtent(featureProfile->getExtent()));
+    }
+
+    return Status::OK();
+}
+
+void
+FeatureModelSource::setReadOptions(const osgDB::Options* readOptions)
+{
+    _readOptions = Registry::cloneOrCreateOptions(readOptions);
+    
+    // for texture atlas support
+    _readOptions->setObjectCacheHint(osgDB::Options::CACHE_IMAGES);
+
+    if (_features.valid())
+    {
+        _features->setReadOptions(_readOptions.get());
     }
 }
 
@@ -169,6 +181,10 @@ osg::Node*
 FeatureModelSource::createNodeImplementation(const Map*        map,
                                              ProgressCallback* progress )
 {
+    // trivial bailout.
+    if (!getStatus().isOK())
+        return 0L;
+
     // user must provide a valid map.
     if ( !map )
     {
@@ -179,7 +195,6 @@ FeatureModelSource::createNodeImplementation(const Map*        map,
     // make sure the feature source initialized properly:
     if ( !_features.valid() || !_features->getFeatureProfile() )
     {
-        OE_WARN << LC << "Invalid feature source" << std::endl;
         return 0L;
     }
 
@@ -188,6 +203,7 @@ FeatureModelSource::createNodeImplementation(const Map*        map,
     if ( !factory )
     {
         OE_WARN << LC << "Unable to create a feature node factory!" << std::endl;
+        setStatus(Status::Error(Status::ServiceUnavailable, "Failed to create a feature node factory"));
         return 0L;
     }
 
@@ -196,7 +212,7 @@ FeatureModelSource::createNodeImplementation(const Map*        map,
         map, 
         _options.styles().get(), 
         _features.get(), 
-        _dbOptions.get() );
+        _readOptions.get() );
 
     // Name the session (for debugging purposes)
     session->setName( this->getName() );
@@ -210,7 +226,8 @@ FeatureModelSource::createNodeImplementation(const Map*        map,
        _preMergeOps.get(),
        _postMergeOps.get() );
 
-    graph->setName( session->getName() );
+    //removed this because an FMG needs an internal name for pseudoloader
+    //graph->setName( session->getName() );
 
     // then run the ops on the staring graph:
     firePostProcessors( graph );
@@ -265,8 +282,9 @@ FeatureNodeFactory::getOrCreateStyleGroup(const Style& style,
 
             if ( Registry::capabilities().supportsGLSL() )
             {
-                stateset->addUniform( Registry::shaderFactory()->createUniformForGLMode(
-                    GL_LIGHTING, render->lighting().value()));
+                stateset->setDefine(OE_LIGHTING_DEFINE, render->lighting().get());
+                //stateset->addUniform( Registry::shaderFactory()->createUniformForGLMode(
+                //    GL_LIGHTING, render->lighting().value()));
             }
         }
 

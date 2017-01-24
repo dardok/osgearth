@@ -1,6 +1,6 @@
 /* -*-c++-*- */
 /* osgEarth - Dynamic map generation toolkit for OpenSceneGraph
- * Copyright 2015 Pelican Mapping
+ * Copyright 2016 Pelican Mapping
  * http://osgearth.org
  *
  * osgEarth is free software; you can redistribute it and/or modify
@@ -168,7 +168,9 @@ namespace osgEarth { namespace Features
     class OSGEARTHFEATURES_EXPORT GeomFeatureNodeFactory : public FeatureNodeFactory
     {
     public:
-        GeomFeatureNodeFactory( const GeometryCompilerOptions& options = GeometryCompilerOptions() );
+        GeomFeatureNodeFactory(
+            const GeometryCompilerOptions& options);
+
 
         bool createOrUpdateNode(       
             FeatureCursor*            features,
@@ -192,15 +194,19 @@ namespace osgEarth { namespace Features
          */
         FeatureModelSource( const FeatureModelSourceOptions& options =FeatureModelSourceOptions() );
 
+        /**
+         * Sets a new read options.
+         */
+        void setReadOptions(const osgDB::Options* readOptions);
 
-    public: // ModelSource
 
-        virtual void initialize( const osgDB::Options* dbOptions =0L );
+    protected: // ModelSource
+
+        virtual Status initialize(const osgDB::Options* readOptions);
 
         virtual osg::Node* createNodeImplementation(
             const Map*        map,
             ProgressCallback* progress );
-    
 
     public:
 
@@ -240,7 +246,7 @@ namespace osgEarth { namespace Features
         osg::observer_ptr<const Map>       _map;
         const FeatureModelSourceOptions    _options;
         osg::ref_ptr<FeatureNodeFactory>   _factory;
-        osg::ref_ptr<const osgDB::Options> _dbOptions;
+        osg::ref_ptr<osgDB::Options>       _readOptions;
 
     };
 

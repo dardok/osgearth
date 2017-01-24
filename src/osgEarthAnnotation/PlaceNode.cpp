@@ -1,6 +1,6 @@
 /* -*-c++-*- */
 /* osgEarth - Dynamic map generation toolkit for OpenSceneGraph
-* Copyright 2015 Pelican Mapping
+* Copyright 2016 Pelican Mapping
 * http://osgearth.org
 *
 * osgEarth is free software; you can redistribute it and/or modify
@@ -30,6 +30,7 @@
 #include <osgEarth/Registry>
 #include <osgEarth/ShaderGenerator>
 #include <osgEarth/GeoMath>
+#include <osgEarth/ScreenSpaceLayout>
 
 #include <osg/Depth>
 #include <osgText/Text>
@@ -41,6 +42,12 @@ using namespace osgEarth::Annotation;
 using namespace osgEarth::Features;
 using namespace osgEarth::Symbology;
 
+PlaceNode::PlaceNode() :
+_labelRotationRad ( 0. ),
+_followFixedCourse( false )
+{
+    //nop
+}
 
 PlaceNode::PlaceNode(MapNode*           mapNode,
                      const GeoPoint&    position,
@@ -124,20 +131,6 @@ PlaceNode::init()
     {
         _followFixedCourse = true;
         _labelRotationRad = osg::DegreesToRadians ( symbol->geographicCourse()->eval() );
-
-        double latRad;
-        double longRad;
-        GeoMath::destination( osg::DegreesToRadians( getPosition().y() ),
-                              osg::DegreesToRadians( getPosition().x() ),
-                              _labelRotationRad,
-                              2500.,
-                              latRad,
-                              longRad );
-        _geoPointProj.set ( osgEarth::SpatialReference::get("wgs84"),
-                                       osg::RadiansToDegrees(longRad),
-                                       osg::RadiansToDegrees(latRad),
-                                       0,
-                                       osgEarth::ALTMODE_ABSOLUTE );
     }
 
     osg::ref_ptr<const InstanceSymbol> instance = _style.get<InstanceSymbol>();
@@ -266,7 +259,9 @@ PlaceNode::init()
     }
 
     if ( text )
+    {
         _geode->addDrawable( text );
+    }
     
     osg::StateSet* stateSet = _geode->getOrCreateStateSet();
     stateSet->setAttributeAndModes( new osg::Depth(osg::Depth::ALWAYS, 0, 1, false), 1 );
@@ -294,6 +289,13 @@ PlaceNode::init()
 }
 
 void
+PlaceNode::dirty()
+{
+    GeoPositionNode::dirty();
+    updateLayoutData();
+}
+
+void
 PlaceNode::setPriority(float value)
 {
     GeoPositionNode::setPriority(value);
@@ -314,12 +316,45 @@ PlaceNode::updateLayoutData()
         _geode->getDrawable(i)->setUserData(_dataLayout.get());
     }
 
-    _dataLayout->setPriority(getPriority());
+    _dataLayout->setPriority(getPriority());    
+    
+    GeoPoint location = getPosition();
+    location.makeGeographic();
+    double latRad;
+    double longRad;
+    GeoMath::destination(osg::DegreesToRadians(location.y()),
+        osg::DegreesToRadians(location.x()),
+        _labelRotationRad,
+        2500.,
+        latRad,
+        longRad);
+
+    _geoPointProj.set(osgEarth::SpatialReference::get("wgs84"),
+        osg::RadiansToDegrees(longRad),
+        osg::RadiansToDegrees(latRad),
+        0,
+        osgEarth::ALTMODE_ABSOLUTE);
+
+    _geoPointLoc.set(osgEarth::SpatialReference::get("wgs84"),
+        //location.getSRS(),
+        location.x(),
+        location.y(),
+        0,
+        osgEarth::ALTMODE_ABSOLUTE);
+
     const TextSymbol* ts = getStyle().get<TextSymbol>();
     if (ts)
     {
         _dataLayout->setPixelOffset(ts->pixelOffset().get());
-        _dataLayout->setRotationRad(_labelRotationRad);
+        
+        if (_followFixedCourse)
+        {
+            osg::Vec3d p0, p1;
+            _geoPointLoc.toWorld(p0);
+            _geoPointProj.toWorld(p1);
+            _dataLayout->setAnchorPoint(p0);
+            _dataLayout->setProjPoint(p1);
+        }
     }
 }
 
@@ -383,42 +418,6 @@ PlaceNode::setDynamic( bool value )
     }
 }
 
-void
-PlaceNode::traverse(osg::NodeVisitor &nv)
-{
-    if(_followFixedCourse)
-    {
-        osgUtil::CullVisitor* cv = NULL;
-        if ( nv.getVisitorType() == osg::NodeVisitor::CULL_VISITOR )
-        {
-            cv = Culling::asCullVisitor(nv);
-            osg::Camera* camera = cv->getCurrentCamera();
-
-            osg::Matrix matrix;
-            matrix.postMult(camera->getViewMatrix());
-            matrix.postMult(camera->getProjectionMatrix());
-            if (camera->getViewport())
-                matrix.postMult(camera->getViewport()->computeWindowMatrix());
-
-            GeoPoint pos( osgEarth::SpatialReference::get("wgs84"),
-                          getPosition().x(),
-                          getPosition().y(),
-                          0,
-                          osgEarth::ALTMODE_ABSOLUTE );
-
-            osg::Vec3d refOnWorld; pos.toWorld(refOnWorld);
-            osg::Vec3d projOnWorld; _geoPointProj.toWorld(projOnWorld);
-            osg::Vec3d refOnScreen = refOnWorld * matrix;
-            osg::Vec3d projOnScreen = projOnWorld * matrix;
-            projOnScreen -= refOnScreen;
-            _labelRotationRad = atan2 (projOnScreen.y(), projOnScreen.x());
-            if (_dataLayout.valid())
-                _dataLayout->setRotationRad(_labelRotationRad);
-        }
-    }
-    GeoPositionNode::traverse(nv);
-}
-
 //-------------------------------------------------------------------
 
 OSGEARTH_REGISTER_ANNOTATION( place, osgEarth::Annotation::PlaceNode );
@@ -432,6 +431,26 @@ _dbOptions( dbOptions ),
 _labelRotationRad ( 0. ),
 _followFixedCourse( false )
 {
+    conf.getObjIfSet( "style",  _style );
+    conf.getIfSet   ( "text",   _text );
+
+    optional<URI> imageURI;
+    conf.getIfSet( "icon", imageURI );
+    if ( imageURI.isSet() )
+    {
+        _image = imageURI->getImage();
+        if ( _image.valid() )
+            _image->setFileName( imageURI->base() );
+    }
+
+    init();
+}
+
+void
+PlaceNode::setConfig(const Config& conf)
+{
+    GeoPositionNode::setConfig(conf);
+
     conf.getObjIfSet( "style",  _style );
     conf.getIfSet   ( "text",   _text );
 
@@ -461,4 +480,46 @@ PlaceNode::getConfig() const
     }
 
     return conf;
+}
+
+
+#undef  LC
+#define LC "[PlaceNode Serializer] "
+
+#include <osgDB/ObjectWrapper>
+#include <osgDB/InputStream>
+#include <osgDB/OutputStream>
+
+namespace
+{
+    // functions
+    static bool checkConfig(const osgEarth::Annotation::PlaceNode& node)
+    {
+        return true;
+    }
+
+    static bool readConfig(osgDB::InputStream& is, osgEarth::Annotation::PlaceNode& node)
+    {
+        std::string json;
+        is >> json;
+        Config conf;
+        conf.fromJSON(json);
+        node.setConfig(conf);
+        return true;
+    }
+
+    static bool writeConfig(osgDB::OutputStream& os, const osgEarth::Annotation::PlaceNode& node)
+    {
+        os << node.getConfig().toJSON(false) << std::endl;
+        return true;
+    }
+
+    REGISTER_OBJECT_WRAPPER(
+        PlaceNode,
+        new osgEarth::Annotation::PlaceNode,
+        osgEarth::Annotation::PlaceNode,
+        "osg::Object osg::Node osg::Group osgEarth::Annotation::AnnotationNode osgEarth::Annotation::GeoPositionNode osgEarth::Annotation::PlaceNode")
+    {
+        ADD_USER_SERIALIZER(Config);
+    }
 }

@@ -1,6 +1,6 @@
 /* -*-c++-*- */
 /* osgEarth - Dynamic map generation toolkit for OpenSceneGraph
- * Copyright 2015 Pelican Mapping
+ * Copyright 2016 Pelican Mapping
  * http://osgearth.org
  *
  * osgEarth is free software; you can redistribute it and/or modify
@@ -20,7 +20,9 @@
 #include "TritonContext"
 #include <osg/GLExtensions>
 #include <osg/Math>
+#include <osgDB/FileNameUtils>
 #include <osgEarth/SpatialReference>
+#include <cstdlib>
 
 #define LC "[TritonContext] "
 
@@ -42,20 +44,11 @@ _oceanWrapper         ( 0L )
 
 TritonContext::~TritonContext()
 {
-    if ( _oceanWrapper )
+    if (_oceanWrapper)
         delete _oceanWrapper;
 
-    if ( _environmentWrapper )
+    if (_environmentWrapper)
         delete _environmentWrapper;
-
-    if ( _ocean )
-        delete _ocean;
-
-    if ( _environment )
-        delete _environment;
-
-    if ( _resourceLoader )
-        delete _resourceLoader;
 }
 
 void
@@ -82,6 +75,12 @@ TritonContext::getHeightMapSize() const
     return osg::clampBetween(_options.heightMapSize().get(), 64, 2048);
 }
 
+const std::string&
+TritonContext::getMaskLayerName() const
+{
+    return _options.maskLayer().get();
+}
+
 void
 TritonContext::initialize(osg::RenderInfo& renderInfo)
 {
@@ -93,8 +92,13 @@ TritonContext::initialize(osg::RenderInfo& renderInfo)
         {
             _initAttempted = true;
 
-            _resourceLoader = new ::Triton::ResourceLoader(
-                _options.resourcePath()->c_str() );
+            std::string resourcePath = _options.resourcePath().get();
+            if (resourcePath.empty() && ::getenv("TRITON_PATH"))
+            {
+                resourcePath = osgDB::concatPaths(::getenv("TRITON_PATH"), "Resources");
+            }
+
+            _resourceLoader = new ::Triton::ResourceLoader(resourcePath.c_str());
 
             _environment = new ::Triton::Environment();
 
@@ -161,7 +165,7 @@ TritonContext::initialize(osg::RenderInfo& renderInfo)
             else
             {
                 _initFailed = true;
-                OE_WARN << LC << "Triton initialization failed" << std::endl;
+                OE_WARN << LC << "Triton initialization failed- err=" << err << std::endl;
             }
         }
     }
@@ -174,5 +178,31 @@ TritonContext::update(double simTime)
     {
         // fmod requires b/c CUDA is limited to single-precision values
         _ocean->UpdateSimulation( fmod(simTime, 86400.0) );
+    }
+}
+
+void
+TritonContext::releaseGLObjects(osg::State* state) const
+{
+    OE_INFO << LC << "Triton shutting down - releasing GL resources\n";
+    if (state)
+    {
+        if ( _ocean )
+        {
+            delete _ocean;
+            _ocean = 0L;
+        }
+
+        if ( _environment )
+        {
+            delete _environment;
+            _environment = 0L;
+        }
+
+        if ( _resourceLoader )
+        {
+            delete _resourceLoader;
+            _resourceLoader = 0L;
+        }
     }
 }

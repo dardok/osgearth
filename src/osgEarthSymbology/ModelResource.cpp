@@ -1,6 +1,6 @@
 /* -*-c++-*- */
 /* osgEarth - Dynamic map generation toolkit for OpenSceneGraph
- * Copyright 2015 Pelican Mapping
+ * Copyright 2016 Pelican Mapping
  * http://osgearth.org
  *
  * osgEarth is free software; you can redistribute it and/or modify
@@ -33,7 +33,9 @@ using namespace osgEarth::Symbology;
 //---------------------------------------------------------------------------
 
 ModelResource::ModelResource( const Config& conf ) :
-InstanceResource( conf )
+InstanceResource( conf ),
+_canScaleToFitXY(true),
+_canScaleToFitZ(true)
 {
     mergeConfig( conf );
 }
@@ -41,7 +43,8 @@ InstanceResource( conf )
 void
 ModelResource::mergeConfig( const Config& conf )
 {
-    //nop
+    conf.getIfSet("can_scale_to_fit_xy", _canScaleToFitXY);
+    conf.getIfSet("can_scale_to_fit_z",  _canScaleToFitZ);
 }
 
 Config
@@ -49,14 +52,15 @@ ModelResource::getConfig() const
 {
     Config conf = InstanceResource::getConfig();
     conf.key() = "model";
-    //nop
+    conf.addIfSet("can_scale_to_fit_xy", _canScaleToFitXY);
+    conf.addIfSet("can_scale_to_fit_z",  _canScaleToFitZ);
     return conf;
 }
 
 const osg::BoundingBox&
 ModelResource::getBoundingBox(const osgDB::Options* dbo)
 {
-    if ( !_bbox.valid() )
+    if ( !_bbox.valid() && _status.isOK() )
     {
         Threading::ScopedMutexLock lock(_mutex);
         if ( !_bbox.valid() )
@@ -87,17 +91,22 @@ namespace
 osg::Node*
 ModelResource::createNodeFromURI( const URI& uri, const osgDB::Options* dbOptions ) const
 {
+    if (_status.isError())
+        return 0L;
+
     osg::ref_ptr< osgDB::Options > options = dbOptions ? new osgDB::Options( *dbOptions ) : 0L;
 
-#if 0
     // Explicitly cache images so that models that share images will only load one copy.
+    // If the options struture doesn't contain an object cache, OSG will use the global
+    // object cache stored in the Registry. Without this, models that share textures or
+    // use an atlas will duplicate memory usage.
+    //
+    // I don't like having this here - it seems like it belongs elsewhere and the caller
+    // should be passing it in. But it needs to be set, so keep for now.
     if ( options.valid() )
     {
-        // does this REALLY belong here? Or should we rely on the incoming dboptions instead
-        // so the user/caller can decide if and how to cache images like texture atlases?
         options->setObjectCacheHint( osgDB::Options::CACHE_IMAGES );
     }
-#endif
 
     osg::Node* node = 0L;
 
@@ -133,6 +142,15 @@ ModelResource::createNodeFromURI( const URI& uri, const osgDB::Options* dbOption
         if (tok.size() >= 2)
         {
             node = createNodeFromURI( URI(tok[1]), options.get() );
+        }
+    }
+
+    if (node == 0L && _status.isOK())
+    {
+        Threading::ScopedMutexLock lock(_mutex);
+        if (_status.isOK())
+        {
+            _status = Status::Error(Status::ServiceUnavailable, "Failed to load resource file");
         }
     }
 

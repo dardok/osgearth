@@ -1,6 +1,6 @@
 /* -*-c++-*- */
 /* osgEarth - Dynamic map generation toolkit for OpenSceneGraph
- * Copyright 2015 Pelican Mapping
+ * Copyright 2016 Pelican Mapping
  * http://osgearth.org
  *
  * osgEarth is free software; you can redistribute it and/or modify
@@ -140,7 +140,9 @@ namespace
     {
         ComputeVisitor()
             : osg::NodeVisitor(osg::NodeVisitor::TRAVERSE_ALL_CHILDREN), 
-              _maxRadius2(0.0f) { }
+              _maxRadius2(0.0f),
+              _maxNormalLen(0.0f),
+              _pass(0u) { }
 
         void run( osg::Node* node, const osg::Vec3d& centerECEF )
         {
@@ -250,7 +252,8 @@ namespace
     {
         ComputeClusterCullingParams( const osg::Vec3d& ecefControlPoint )
             : osg::NodeVisitor(osg::NodeVisitor::TRAVERSE_ALL_CHILDREN),
-              _minDeviation( 1.0 )
+              _minDeviation( 1.0 ),
+              _maxOffset(0)
         {
             _ecefControl = ecefControlPoint;
             _ecefNormal = ecefControlPoint;
@@ -284,7 +287,7 @@ namespace
         }
         
         std::vector<osg::Matrixd> _matrixStack;
-        double _maxOffset, _maxRadius, _minDeviation;
+        double _maxOffset, _minDeviation;
         osg::Vec3d _ecefControl, _ecefNormal;
     };
 }
@@ -975,7 +978,7 @@ namespace
         "#version " GLSL_VERSION_STR "\n"
         GLSL_DEFAULT_PRECISION_FLOAT "\n"
         "uniform mat4 osg_ViewMatrix; \n"
-        "varying float oe_horizon_alpha; \n"
+        "out float oe_horizon_alpha; \n"
         "void oe_horizon_vertex(inout vec4 VertexVIEW) \n"
         "{ \n"
         "    const float scale     = 0.001; \n"                 // scale factor keeps dots&crosses in SP range
@@ -999,7 +1002,7 @@ namespace
     const char* horizon_fs =
         "#version " GLSL_VERSION_STR "\n"
         GLSL_DEFAULT_PRECISION_FLOAT "\n"
-        "varying float oe_horizon_alpha; \n"
+        "in float oe_horizon_alpha; \n"
         "void oe_horizon_fragment(inout vec4 color) \n"
         "{ \n"
         "    color.a *= oe_horizon_alpha; \n"

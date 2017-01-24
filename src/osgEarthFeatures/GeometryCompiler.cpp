@@ -1,6 +1,6 @@
 /* -*-c++-*- */
 /* osgEarth - Dynamic map generation toolkit for OpenSceneGraph
- * Copyright 2015 Pelican Mapping
+ * Copyright 2016 Pelican Mapping
  * http://osgearth.org
  *
  * osgEarth is free software; you can redistribute it and/or modify
@@ -385,7 +385,7 @@ GeometryCompiler::compile(FeatureList&          workingSet,
     // instance substitution (replaces marker)
     else if ( model )
     {
-        const InstanceSymbol* instance = model ? (const InstanceSymbol*)model : (const InstanceSymbol*)icon;
+        const InstanceSymbol* instance = (const InstanceSymbol*)model;
 
         // use a separate filter context since we'll be munging the data
         FilterContext localCX = sharedCX;
@@ -491,7 +491,9 @@ GeometryCompiler::compile(FeatureList&          workingSet,
         BuildGeometryFilter filter( style );
         filter.maxGranularity() = *_options.maxGranularity();
         filter.geoInterp()      = *_options.geoInterp();
-        filter.maxPolygonTilingAngle() = *_options.maxPolygonTilingAngle();
+
+        if (_options.maxPolygonTilingAngle().isSet())
+            filter.maxPolygonTilingAngle() = *_options.maxPolygonTilingAngle();
 
         if ( _options.featureName().isSet() )
             filter.featureName() = *_options.featureName();
@@ -575,13 +577,18 @@ GeometryCompiler::compile(FeatureList&          workingSet,
             osgUtil::Optimizer::REMOVE_REDUNDANT_NODES |
             osgUtil::Optimizer::COMBINE_ADJACENT_LODS |
             osgUtil::Optimizer::SHARE_DUPLICATE_STATE |
-            osgUtil::Optimizer::MERGE_GEOMETRY |
+            //osgUtil::Optimizer::MERGE_GEOMETRY |
             osgUtil::Optimizer::CHECK_GEOMETRY |
             osgUtil::Optimizer::MERGE_GEODES |
             osgUtil::Optimizer::STATIC_OBJECT_DETECTION;
 
         osgUtil::Optimizer opt;
         opt.optimize(resultGroup.get(), optimizations);
+
+        osgUtil::Optimizer::MergeGeometryVisitor mg;
+        mg.setTargetMaximumNumberOfVertices(65536);
+        resultGroup->accept(mg);
+
         OE_DEBUG << LC << "optimize complete" << std::endl;
 
         if ( trackHistory ) history.push_back( "optimize" );

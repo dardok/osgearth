@@ -1,6 +1,6 @@
 /* -*-c++-*- */
 /* osgEarth - Dynamic map generation toolkit for OpenSceneGraph
- * Copyright 2015 Pelican Mapping
+ * Copyright 2016 Pelican Mapping
  * http://osgearth.org
  *
  * osgEarth is free software; you can redistribute it and/or modify
@@ -173,13 +173,16 @@ namespace
 }
 
 
+REGISTER_OSGEARTH_EXTENSION( osgearth_terrainshader, TerrainShaderExtension )
+
+
 TerrainShaderExtension::TerrainShaderExtension()
 {
     //nop
 }
 
 TerrainShaderExtension::TerrainShaderExtension(const TerrainShaderOptions& options) :
-_options( options )
+TerrainShaderOptions( options )
 {
     //nop
 }
@@ -203,7 +206,7 @@ TerrainShaderExtension::connect(MapNode* mapNode)
         OE_WARN << LC << "Illegal: MapNode cannot be null." << std::endl;
         return false;
     }
-    _effect = new GLSLEffect( _options, _dbOptions.get() );
+    _effect = new GLSLEffect( *this, _dbOptions.get() );
     mapNode->getTerrainEngine()->addEffect( _effect.get() );
     
     OE_INFO << LC << "Installed.\n";

@@ -1,6 +1,6 @@
 /* -*-c++-*- */
 /* osgEarth - Dynamic map generation toolkit for OpenSceneGraph
- * Copyright 2015 Pelican Mapping
+ * Copyright 2016 Pelican Mapping
  * http://osgearth.org
  *
  * osgEarth is free software; you can redistribute it and/or modify
@@ -47,31 +47,31 @@ public:
 
         if (!_options.options().isSet())
         {
-            return Status::Error("Please specify a image layer for the skyview driver.");
+            return Status::Error(Status::ConfigurationError, "Please specify a image layer for the skyview driver.");
         }
 
         _source = TileSourceFactory::create( *_options.options());
 
         if (!_source.valid())
         {
-            return Status::Error("Failed to load image layer for skyview driver");
+            return Status::Error(Status::ServiceUnavailable, "Failed to load image layer for skyview driver");
         }
 
          // Open the tile source (if it hasn't already been started)
-        TileSource::Status status = _source->getStatus();
-        if ( status != TileSource::STATUS_OK )
+        Status status = _source->getStatus();
+        if (status.isError())
         {
             status = _source->open(TileSource::MODE_READ, _dbOptions.get());
         }
 
-         if ( status != TileSource::STATUS_OK )
-         {
-            return Status::Error("Failed to open image layer for skyview driver");
-         }
+        if (status.isError())
+        {
+            return status;
+        }
         
         setProfile(_source->getProfile());           
 
-        return STATUS_OK;
+        return osgEarth::STATUS_OK;
     }
 
     osg::Image*
@@ -112,12 +112,12 @@ public:
         supportsExtension( "osgearth_skyview", "SkyView driver for osgEarth" );
     }
 
-    virtual const char* className()
+    const char* className() const
     {
         return "SkyView Image Driver";
     }
 
-    virtual ReadResult readObject(const std::string& file_name, const Options* options) const
+    ReadResult readObject(const std::string& file_name, const Options* options) const
     {
         if ( !acceptsExtension(osgDB::getLowerCaseFileExtension( file_name )))
             return ReadResult::FILE_NOT_HANDLED;

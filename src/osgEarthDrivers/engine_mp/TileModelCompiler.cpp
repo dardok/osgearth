@@ -1,6 +1,6 @@
 /* -*-c++-*- */
 /* osgEarth - Dynamic map generation toolkit for OpenSceneGraph
-* Copyright 2015 Pelican Mapping
+* Copyright 2016 Pelican Mapping
 * http://osgearth.org
 *
 * osgEarth is free software; you can redistribute it and/or modify
@@ -142,6 +142,13 @@ namespace
             stitchTileCoords = 0L;
             installParentData = false;
             usePatches       = false;
+            numVerticesInSkirt = 0;
+            numVerticesInSurface = 0;
+            numRows = 0;
+            numCols = 0;
+            originalNumRows = 0;
+            originalNumCols = 0;
+            useUInt = false;
         }
 
         osg::Matrixd local2world, world2local;
@@ -418,6 +425,9 @@ namespace
 
 #else // not USE_TEXCOORD_CACHE
         d.renderTileCoords = new osg::Vec2Array();
+#if OSG_MIN_VERSION_REQUIRED(3,5,6)
+        if(osg::DisplaySettings::instance()->getVertexBufferHint() == osg::DisplaySettings::VERTEX_ARRAY_OBJECT) d.renderTileCoords->setVertexBufferObject( new osg::VertexBufferObject() );
+#endif
         d.renderTileCoords->reserve( d.numVerticesInSurface );
         d.ownsTileCoords = true;
 #endif
@@ -463,6 +473,9 @@ namespace
 
 #else // not USE_TEXCOORD_CACHE
                     r._texCoords = new osg::Vec2Array();
+#if OSG_MIN_VERSION_REQUIRED(3,5,6)
+                    if(osg::DisplaySettings::instance()->getVertexBufferHint() == osg::DisplaySettings::VERTEX_ARRAY_OBJECT) r._texCoords->setVertexBufferObject( new osg::VertexBufferObject() );
+#endif
                     r._texCoords->reserve( d.numVerticesInSurface );
                     r._ownsTexCoords = true;
 #endif
@@ -1980,6 +1993,13 @@ namespace
         if ( d.renderTileCoords.valid() )
             d.surface->_tileCoords = d.renderTileCoords;
 
+        // install the tile coordinates in the geometry.
+        if ( d.surface->_tileCoords.valid() )
+        {
+            int index = d.surface->getTexCoordArrayList().size();
+            d.surface->setTexCoordArray( index, d.surface->_tileCoords.get() );
+        }
+
         // install the render data for each layer:
         for( RenderLayerVector::const_iterator r = d.renderLayers.begin(); r != d.renderLayers.end(); ++r )
         {
@@ -2050,13 +2070,6 @@ namespace
                 mr->_geom->_layers[order] = layer;
                 mr->_geom->_tileCoords = d.stitchTileCoords.get();
             }
-        }
-
-        // install the tile coordinates in the geometry.
-        if ( d.surface->_tileCoords.valid() )
-        {
-            int index = d.surface->getTexCoordArrayList().size();
-            d.surface->setTexCoordArray( index, d.surface->_tileCoords.get() );
         }
 
         // elevation texture.
@@ -2236,8 +2249,13 @@ TileModelCompiler::compile(TileModel*        model,
     // camera matricies when DRAW overlaps the next frame's CULL. Please see my comments
     // in DrapingTechnique.cpp for more information.
     // NOTE: cannot set this until optimizations (above) are complete
+
+    // Using VAOs on MPGeometry doesn't work if the data variance is set to DYNAMIC,
+    // so for now, don't run with for VAO testing
+//#ifndef USE_VAO
     SetDataVarianceVisitor sdv( osg::Object::DYNAMIC );
     tile->accept( sdv );
+//#endif
 
     osg::ComputeBoundsVisitor cbv;
     d.surfaceGeode->accept(cbv);

@@ -1,6 +1,6 @@
 /* -*-c++-*- */
 /* osgEarth - Dynamic map generation toolkit for OpenSceneGraph
-* Copyright 2015 Pelican Mapping
+* Copyright 2016 Pelican Mapping
 * http://osgearth.org
 *
 * osgEarth is free software; you can redistribute it and/or modify
@@ -44,10 +44,12 @@ BYOTerrainEngineNode::~BYOTerrainEngineNode()
 }
 
 void
-BYOTerrainEngineNode::preInitialize( const Map* map, const TerrainOptions& options )
+BYOTerrainEngineNode::setMap( const Map* map, const TerrainOptions& options )
 {
-    TerrainEngineNode::preInitialize( map, options );
+    TerrainEngineNode::setMap( map, options );
+
     BYOTerrainEngineOptions myoptions(options);
+
     if ( myoptions.getNode() )
     {
         this->addChild( myoptions.getNode() );
@@ -56,11 +58,7 @@ BYOTerrainEngineNode::preInitialize( const Map* map, const TerrainOptions& optio
     {
         OE_INFO << LC << "Loading terrain from " << myoptions.url()->full() << std::endl;
 
-        // no caching for this terrain.
-        osg::ref_ptr<osgDB::Options> dbOptions = Registry::instance()->cloneOrCreateOptions();
-        CachePolicy::NO_CACHE.apply( dbOptions.get() );
-
-        osg::Node* node = myoptions.url()->getNode( dbOptions.get() );
+        osg::Node* node = myoptions.url()->getNode();
         if ( node )
         {
             if ( myoptions.shaderPolicy() == SHADERPOLICY_GENERATE )

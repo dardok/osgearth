@@ -33,7 +33,7 @@ class TemplateReaderWriter: public osgDB::ReaderWriter
             supportsExtension("template","Template");
         }
 
-        virtual const char* className() { return "TemplateReaderWriter"; }
+        virtual const char* className() const { return "TemplateReaderWriter"; }
 
         virtual bool acceptsExtension(const std::string& extension) const
         {
@@ -92,7 +92,7 @@ class TemplateReaderWriter: public osgDB::ReaderWriter
             // since we are using the stream based readNode function and the Earth driver won't know 
             // where the original earth file came frame.
             osg::ref_ptr< osgDB::Options > opt = osgEarth::Registry::instance()->cloneOrCreateOptions(options);
-            osgEarth::URIContext( realName ).apply( opt.get() );
+            osgEarth::URIContext( realName ).store( opt.get() );
 
             return driver->readNode( output.buf, opt.get() );                       
         }        

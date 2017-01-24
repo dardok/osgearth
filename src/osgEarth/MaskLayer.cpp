@@ -1,6 +1,6 @@
 /* -*-c++-*- */
 /* osgEarth - Dynamic map generation toolkit for OpenSceneGraph
- * Copyright 2015 Pelican Mapping
+ * Copyright 2016 Pelican Mapping
  * http://osgearth.org
  *
  * osgEarth is free software; you can redistribute it and/or modify
@@ -18,6 +18,7 @@
  */
 #include <osgEarth/MaskLayer>
 #include <osgEarth/Map>
+#include <osgEarth/Registry>
 
 #define LC "[MaskLayer] "
 
@@ -97,27 +98,64 @@ void
 MaskLayer::copyOptions()
 {
     _runtimeOptions = _initOptions;
+    if (!_runtimeOptions.name()->empty())
+    {
+        setName(_runtimeOptions.name().get());
+    }
 }
 
 void
-MaskLayer::initialize( const osgDB::Options* dbOptions, const Map* map )
+MaskLayer::setReadOptions(const osgDB::Options* readOptions)
 {
-    _dbOptions = osg::clone(dbOptions);
+    _readOptions = Registry::cloneOrCreateOptions(readOptions);
+}
 
+void
+MaskLayer::setName(const std::string& name)
+{
+    Layer::setName(name);
+    _runtimeOptions.name() = name;
+}
+
+const Status&
+MaskLayer::open()
+{
+    setStatus(initialize());
+    return getStatus();
+}
+
+Status
+MaskLayer::initialize()
+{
     if ( !_maskSource.valid() && _initOptions.driver().isSet() )
     {
         _maskSource = MaskSourceFactory::create( *_initOptions.driver() );
+        if (!_maskSource.valid())
+        {
+            return Status::Error(Status::ServiceUnavailable, Stringify()<<"Failed to create mask driver (" << _initOptions.driver()->getDriver() << ")");
+        }
     }
 
     if ( _maskSource.valid() )
     {
-        _maskSource->initialize( dbOptions );
+        const Status& sourceStatus = _maskSource->open(_readOptions.get());  
+        if (sourceStatus.isError())
+        {
+            return sourceStatus;
+        }
     }
+
+    return Status::OK();
 }
 
 osg::Vec3dArray*
 MaskLayer::getOrCreateMaskBoundary( float heightScale, const SpatialReference *srs, ProgressCallback* progress )
 {
+    if (getStatus().isError())
+    {
+        return 0L;
+    }
+
     OpenThreads::ScopedLock< OpenThreads::Mutex > lock( _mutex );
     if ( _maskSource.valid() )
     {
@@ -130,12 +168,20 @@ MaskLayer::getOrCreateMaskBoundary( float heightScale, const SpatialReference *s
         if ( !_boundary.valid() )
         {
 			_boundary = _maskSource->createBoundary( srs, progress );
+            
+            if (_boundary.valid())
+            {
+			    for (osg::Vec3dArray::iterator vIt = _boundary->begin(); vIt != _boundary->end(); ++vIt)
+    				vIt->z() = vIt->z() * heightScale;
 
-			for (osg::Vec3dArray::iterator vIt = _boundary->begin(); vIt != _boundary->end(); ++vIt)
-				vIt->z() = vIt->z() * heightScale;
-
-            _maskSource->sync( _maskSourceRev );
+                _maskSource->sync( _maskSourceRev );
+            }
         }
+    }
+
+    if (!_boundary.valid())
+    {
+        setStatus(Status::Error("Failed to create masking boundary"));
     }
 
     return _boundary.get();

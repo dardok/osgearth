@@ -1,6 +1,6 @@
 /* -*-c++-*- */
 /* osgEarth - Dynamic map generation toolkit for OpenSceneGraph
-* Copyright 2015 Pelican Mapping
+* Copyright 2016 Pelican Mapping
 * http://osgearth.org
 *
 * osgEarth is free software; you can redistribute it and/or modify
@@ -246,6 +246,8 @@ main( int argc, char** argv )
     MouseCoordsTool* mct = new MouseCoordsTool(mapNode);
     mct->addCallback( new PlacerCallback(place, viewer.getView(0)) );
     viewer.getView(1)->addEventHandler( mct );
+
+    mapNode->addChild(new HorizonNode());
 
     viewer.getView(1)->getCamera()->addCullCallback( new VisitorData::Install("osgEarth.Stealth") );
 

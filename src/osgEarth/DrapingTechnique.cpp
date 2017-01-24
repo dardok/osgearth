@@ -1,6 +1,6 @@
 /* -*-c++-*- */
 /* osgEarth - Dynamic map generation toolkit for OpenSceneGraph
-* Copyright 2015 Pelican Mapping
+* Copyright 2016 Pelican Mapping
 * http://osgearth.org
 *
 * osgEarth is free software; you can redistribute it and/or modify
@@ -27,6 +27,7 @@
 #include <osgEarth/VirtualProgram>
 #include <osgEarth/Shaders>
 #include <osgEarth/CullingUtils>
+#include <osgEarth/Lighting>
 
 #include <osg/BlendFunc>
 #include <osg/TexGen>
@@ -54,7 +55,7 @@ namespace
     class DrapingCamera : public osg::Camera
     {
     public:
-        DrapingCamera() : osg::Camera()
+        DrapingCamera() : osg::Camera(), _camera(0L)
         {
             setCullingActive( false );
         }
@@ -346,12 +347,42 @@ DrapingTechnique::hasData(OverlayDecorator::TechRTTParams& params) const
     return getBound(params).valid();
 }
 
+namespace
+{
+    // Customized texture class will disable texture filtering when rendering under a pick camera.
+    class DrapingTexture : public osg::Texture2D
+    {
+    public:
+        virtual void apply(osg::State& state) const
+        {
+            const osg::StateSet::DefineList& defines = state.getDefineMap().currentDefines;
+            if (defines.find("OE_IS_PICK_CAMERA") != defines.end())
+            {
+                FilterMode minFilter = _min_filter;
+                FilterMode magFilter = _mag_filter;
+                DrapingTexture* ncThis = const_cast<DrapingTexture*>(this);
+                ncThis->_min_filter = NEAREST;
+                ncThis->_mag_filter = NEAREST;
+                ncThis->dirtyTextureParameters();
+                osg::Texture2D::apply(state);
+                ncThis->_min_filter = minFilter;
+                ncThis->_mag_filter = magFilter;
+                ncThis->dirtyTextureParameters();
+            }
+            else
+            {
+                osg::Texture2D::apply(state);
+            }
+        }
+    };
+}
 
 void
 DrapingTechnique::setUpCamera(OverlayDecorator::TechRTTParams& params)
 {
     // create the projected texture:
-    osg::Texture2D* projTexture = new osg::Texture2D();
+    osg::Texture2D* projTexture = new DrapingTexture(); 
+
     projTexture->setTextureSize( *_textureSize, *_textureSize );
     projTexture->setInternalFormat( GL_RGBA );
     projTexture->setSourceFormat( GL_RGBA );
@@ -410,7 +441,8 @@ DrapingTechnique::setUpCamera(OverlayDecorator::TechRTTParams& params)
     osg::StateAttribute::OverrideValue forceOff =
         osg::StateAttribute::OFF | osg::StateAttribute::PROTECTED | osg::StateAttribute::OVERRIDE;
 
-    rttStateSet->addUniform( Registry::shaderFactory()->createUniformForGLMode(GL_LIGHTING, forceOff) );
+    rttStateSet->setDefine(OE_LIGHTING_DEFINE, forceOff);
+    //rttStateSet->addUniform( Registry::shaderFactory()->createUniformForGLMode(GL_LIGHTING, forceOff) );
     rttStateSet->setMode( GL_LIGHTING, forceOff );
     
     // activate blending within the RTT camera's FBO
@@ -466,7 +498,7 @@ DrapingTechnique::setUpCamera(OverlayDecorator::TechRTTParams& params)
         // fine, although I think it would be proper to clip at the fragment level with 
         // alpha. We shall see.
         const char* warpClip =
-            "#version 330\n"
+            "#version " GLSL_VERSION_STR "\n"
             "void oe_overlay_warpClip(inout vec4 vclip) { \n"
             "    if (vclip.z > 1.0) vclip.z = vclip.w+1.0; \n"
             "} \n";

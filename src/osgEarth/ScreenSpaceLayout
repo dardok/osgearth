@@ -1,6 +1,6 @@
 /* -*-c++-*- */
 /* osgEarth - Dynamic map generation toolkit for OpenSceneGraph
-* Copyright 2015 Pelican Mapping
+* Copyright 2016 Pelican Mapping
 * http://osgearth.org
 *
 * osgEarth is free software; you can redistribute it and/or modify
@@ -52,8 +52,7 @@ namespace osgEarth
         /** Constructor */
         ScreenSpaceLayoutData() :
             _priority(0.0f),
-            _pixelOffset(0, 0),
-            _localRotationRad(0.0f) { }
+            _pixelOffset(0, 0) { }
 
         /** Decluttering priority - FLT_MAX means don't declutter */
         void setPriority(float value) { _priority = value; }
@@ -63,14 +62,18 @@ namespace osgEarth
         void setPixelOffset(const osg::Vec2s& value) { _pixelOffset = value; }
         const osg::Vec2s& getPixelOffset() const     { return _pixelOffset; }
 
-        /** Rotation from geoposition in radians */
-        void setRotationRad(float value) { _localRotationRad = value; }
-        float getRotationRad() const     { return _localRotationRad; }
+        /** World point for label rotation reference */
+        void setAnchorPoint(const osg::Vec3d& value) { _anchorPoint = value; }
+        const osg::Vec3d& getAnchorPoint() const { return _anchorPoint; }
+
+        /** Reference point for label rotation reference */
+        void setProjPoint(const osg::Vec3d& value) { _refPoint = value; }
+        const osg::Vec3d& getProjPoint() const { return _refPoint; }
 
     public:
         float      _priority;
         osg::Vec2s _pixelOffset;
-        float      _localRotationRad;
+        osg::Vec3d _anchorPoint, _refPoint;
 
     public:
         virtual ~ScreenSpaceLayoutData() { }
@@ -88,31 +91,23 @@ namespace osgEarth
     };
 
     /**
-     * A decluttering functor that sorts by the priority field in AnnotationNode.
-     * AnnotationNode should be attached to each Drawable's user data.
-     */
-    struct OSGEARTH_EXPORT DeclutterByPriority : public DeclutterSortFunctor
-    {
-        virtual bool operator()(const osgUtil::RenderLeaf* lhs, const osgUtil::RenderLeaf* rhs ) const;
-        virtual ~DeclutterByPriority() { }
-    };
-
-    /**
      * Options to control the annotation decluttering engine.
      */
-    class OSGEARTH_EXPORT ScreenSpaceLayoutOptions
+    class OSGEARTH_EXPORT ScreenSpaceLayoutOptions : public ConfigOptions
     {
     public:
-        ScreenSpaceLayoutOptions( const Config& conf =Config() )
-            : _minAnimAlpha         ( 0.35f ),
+        ScreenSpaceLayoutOptions( const ConfigOptions& co =ConfigOptions() )
+            : ConfigOptions         ( co ),
+              _minAnimAlpha         ( 0.35f ),
               _minAnimScale         ( 0.45f ),
               _inAnimTime           ( 0.40f ),
               _outAnimTime          ( 0.00f ),
               _sortByPriority       ( false ),
               _snapToPixel          ( true ),
-              _maxObjects           ( INT_MAX )
+              _maxObjects           ( INT_MAX ),
+              _renderBinNumber      ( 13 )
         {
-            fromConfig(conf);
+            fromConfig(_conf);
         }
 
         virtual ~ScreenSpaceLayoutOptions() { }
@@ -146,6 +141,10 @@ namespace osgEarth
         optional<unsigned>& maxObjects() { return _maxObjects; }
         const optional<unsigned>& maxObjects() const { return _maxObjects; }
 
+        /** Render bin number to use for the screen layout */
+        optional<int>& renderOrder() { return _renderBinNumber; }
+        const optional<int>& renderOrder() const { return _renderBinNumber; }
+
     public:
 
         Config getConfig() const;
@@ -158,6 +157,7 @@ namespace osgEarth
         optional<bool>     _sortByPriority;
         optional<bool>     _snapToPixel;
         optional<unsigned> _maxObjects;
+        optional<int>      _renderBinNumber;
 
         void fromConfig( const Config& conf );
     };
@@ -169,7 +169,7 @@ namespace osgEarth
          * Drawables rendered while this stateset is active will be projected from
          * scene space to 2D screen space with optional decluttering.
          */
-        static void activate(osg::StateSet* stateSet, int binNum =13);
+        static void activate(osg::StateSet* stateSet); //, int binNum =13);
 
         /**
          * Deactivates the use of the screen-space layout engine for a stateset.

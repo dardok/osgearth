@@ -1,6 +1,6 @@
 /* -*-c++-*- */
 /* osgEarth - Dynamic map generation toolkit for OpenSceneGraph
- * Copyright 2015 Pelican Mapping
+ * Copyright 2016 Pelican Mapping
  * http://osgearth.org
  *
  * osgEarth is free software; you can redistribute it and/or modify
@@ -17,6 +17,7 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>
  */
 #include <osgEarthSymbology/ResourceCache>
+#include <osg/Texture2D>
 
 using namespace osgEarth;
 using namespace osgEarth::Symbology;
@@ -30,6 +31,35 @@ _instanceCache( false ),
 _resourceLibraryCache( false )
 {
     //nop
+}
+
+bool
+ResourceCache::getOrCreateLineTexture(const URI& uri, osg::ref_ptr<osg::Texture>& output, const osgDB::Options* readOptions)
+{
+    Threading::ScopedMutexLock lock(_texMutex);
+    TextureCache::Record rec;
+    if (_texCache.get(uri.full(), rec) && rec.value().valid())
+    {
+        output = rec.value().get();
+    }
+    else
+    {
+        osg::ref_ptr<osg::Image> image = uri.getImage(readOptions);
+        if (image.valid())
+        {
+            osg::Texture2D* tex = new osg::Texture2D(image);
+            tex->setWrap( osg::Texture::WRAP_S, osg::Texture::CLAMP_TO_EDGE );
+            tex->setWrap( osg::Texture::WRAP_T, osg::Texture::REPEAT );
+            tex->setFilter( osg::Texture::MIN_FILTER, osg::Texture::LINEAR_MIPMAP_LINEAR );
+            tex->setFilter( osg::Texture::MAG_FILTER, osg::Texture::LINEAR);
+            tex->setMaxAnisotropy( 4.0f );
+            tex->setResizeNonPowerOfTwoHint( false );
+            output = tex;
+            _texCache.insert(uri.full(), output.get());
+        }
+    }
+
+    return output.valid();
 }
 
 bool
@@ -116,7 +146,7 @@ ResourceCache::cloneOrCreateInstanceNode(InstanceResource*        res,
         Threading::ScopedMutexLock exclusive( _instanceMutex );
 
         // Deep copy everything except for images.  Some models may share imagery so we only want one copy of it at a time.
-        osg::CopyOp copyOp = osg::CopyOp::DEEP_COPY_ALL & ~osg::CopyOp::DEEP_COPY_IMAGES;
+        osg::CopyOp copyOp = osg::CopyOp::DEEP_COPY_ALL & ~osg::CopyOp::DEEP_COPY_IMAGES & ~osg::CopyOp::DEEP_COPY_TEXTURES;
 
         // double check to avoid race condition
         InstanceCache::Record rec;

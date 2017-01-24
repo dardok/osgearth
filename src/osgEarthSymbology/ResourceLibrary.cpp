@@ -1,6 +1,6 @@
 /* -*-c++-*- */
 /* osgEarth - Dynamic map generation toolkit for OpenSceneGraph
- * Copyright 2015 Pelican Mapping
+ * Copyright 2016 Pelican Mapping
  * http://osgearth.org
  *
  * osgEarth is free software; you can redistribute it and/or modify
@@ -394,7 +394,6 @@ ResourceLibrary::getModels(const ModelSymbol* ms, ModelResourceVector& output, c
             ModelResource* m = dynamic_cast<ModelResource*>(i->second.get());
             if ( m )
             {
-                // check for matching tags:
                 if (ms && ms->tags().size() > 0 && !m->containsTags(ms->tags()) )
                     continue;
 

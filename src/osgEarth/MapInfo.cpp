@@ -1,6 +1,6 @@
 /* -*-c++-*- */
 /* osgEarth - Dynamic map generation toolkit for OpenSceneGraph
- * Copyright 2015 Pelican Mapping
+ * Copyright 2016 Pelican Mapping
  * http://osgearth.org
  *
  * osgEarth is free software; you can redistribute it and/or modify
@@ -29,14 +29,8 @@ _profile               ( 0L ),
 _isGeocentric          ( true ),
 _isCube                ( false ),
 _elevationInterpolation( INTERP_BILINEAR )
-{ 
-    if ( map )
-    {
-        _profile = map->getProfile();
-        _isGeocentric = map->isGeocentric();
-        _isCube = map->getMapOptions().coordSysType() == MapOptions::CSTYPE_GEOCENTRIC_CUBE;
-        _elevationInterpolation = *map->getMapOptions().elevationInterpolation();
-    }
+{
+    setMap(map);
 }
 
 MapInfo::MapInfo( const MapInfo& rhs ) :
@@ -46,4 +40,20 @@ _isCube                ( rhs._isCube ),
 _elevationInterpolation( rhs._elevationInterpolation )
 {
     //nop
+}
+
+void
+MapInfo::setMap(const Map* map)
+{
+    if (map)
+    {
+        _profile = map->getProfile();
+        _isGeocentric = map->isGeocentric();
+        _isCube = map->getMapOptions().coordSysType() == MapOptions::CSTYPE_GEOCENTRIC_CUBE;
+        _elevationInterpolation = *map->getMapOptions().elevationInterpolation();
+    }
+    else
+    {
+        _profile = 0L;
+    }
 }

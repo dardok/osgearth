@@ -1,6 +1,6 @@
 /* -*-c++-*- */
 /* osgEarth - Dynamic map generation toolkit for OpenSceneGraph
-* Copyright 2015 Pelican Mapping
+* Copyright 2016 Pelican Mapping
 * http://osgearth.org
 *
 * osgEarth is free software; you can redistribute it and/or modify
@@ -26,6 +26,9 @@
 
 #include <osgEarth/DepthOffset>
 #include <osgEarth/MapNode>
+
+#include <osg/PolygonOffset>
+#include <osg/Depth>
 
 using namespace osgEarth;
 using namespace osgEarth::Annotation;
@@ -197,7 +200,7 @@ AnnotationNode::applyRenderSymbology(const Style& style)
         }
 #endif
 
-        if ( render->order().isSet() || render->renderBin().isSet() )
+        if ( supportsRenderBinDetails() && (render->order().isSet() || render->renderBin().isSet()) )
         {
             osg::StateSet* ss = getOrCreateStateSet();
             int binNumber = render->order().isSet() ? (int)render->order()->eval() : ss->getBinNumber();
@@ -217,6 +220,15 @@ AnnotationNode::applyRenderSymbology(const Style& style)
         {
             osg::StateSet* ss = getOrCreateStateSet();
             ss->setRenderingHint( ss->TRANSPARENT_BIN );
+        }
+        
+        if (render->decal() == true)
+        {
+            getOrCreateStateSet()->setAttributeAndModes(
+                new osg::PolygonOffset(-1,-1), 1);
+
+            getOrCreateStateSet()->setAttributeAndModes(
+                new osg::Depth(osg::Depth::LEQUAL, 0, 1, false));
         }
     }
 }

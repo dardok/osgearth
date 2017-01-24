@@ -1,6 +1,6 @@
 /* -*-c++-*- */
 /* osgEarth - Dynamic map generation toolkit for OpenSceneGraph
- * Copyright 2015 Pelican Mapping
+ * Copyright 2016 Pelican Mapping
  * http://osgearth.org
  *
  * osgEarth is free software; you can redistribute it and/or modify
@@ -37,7 +37,8 @@ namespace osgEarth { namespace Viewpoints
      */
     class ViewpointsExtension : public Extension,
                                 public ExtensionInterface<osg::View>,
-                                public ExtensionInterface<Control>
+                                public ExtensionInterface<Control>,
+                                public ConfigOptions
     {
     public:
         META_Object(osgearth_ext_viewpoints, ViewpointsExtension);
@@ -53,6 +54,9 @@ namespace osgEarth { namespace Viewpoints
     public: // Extension
 
         void setDBOptions(const osgDB::Options* dbOptions);
+
+        // Use "this" since this class derives from ConfigOptions.
+        const ConfigOptions& getConfigOptions() const { return *this; }
 
 
     public: // ExtensionInterface<osg::View>

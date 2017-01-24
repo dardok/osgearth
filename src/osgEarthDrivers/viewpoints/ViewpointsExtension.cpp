@@ -1,6 +1,6 @@
 /* -*-c++-*- */
 /* osgEarth - Dynamic map generation toolkit for OpenSceneGraph
- * Copyright 2015 Pelican Mapping
+ * Copyright 2016 Pelican Mapping
  * http://osgearth.org
  *
  * osgEarth is free software; you can redistribute it and/or modify
@@ -161,7 +161,8 @@ ViewpointsExtension::ViewpointsExtension()
     //NOP
 }
 
-ViewpointsExtension::ViewpointsExtension(const ConfigOptions& options)
+ViewpointsExtension::ViewpointsExtension(const ConfigOptions& options) :
+ConfigOptions( options )
 {
     // backwards-compatibility: read viewpoints at the top level???
     const Config& viewpointsConf = options.getConfig();

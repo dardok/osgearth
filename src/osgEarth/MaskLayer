@@ -1,6 +1,6 @@
 /* -*-c++-*- */
 /* osgEarth - Dynamic map generation toolkit for OpenSceneGraph
- * Copyright 2015 Pelican Mapping
+ * Copyright 2016 Pelican Mapping
  * http://osgearth.org
  *
  * osgEarth is free software; you can redistribute it and/or modify
@@ -106,11 +106,6 @@ namespace osgEarth
          */
         MaskSource* getMaskSource() const { return _maskSource.get(); }
 
-        /** 
-         * Gets the name of this mask layer
-         */
-        const std::string& getName() const { return *_runtimeOptions.name(); }
-
         /**
          * Minimum terrain LOD at which masking should occur
          */
@@ -125,9 +120,20 @@ namespace osgEarth
             const SpatialReference* srs,
             ProgressCallback*       progress );
 
+    public: // osg::Object
+        
+        /** Name of the layer */
+        virtual void setName(const std::string& name);
+
     public:
 
-        void initialize( const osgDB::Options* dbOptions, const Map* map );
+        void setReadOptions(const osgDB::Options* readOptions);
+
+        const Status& open();
+
+    protected:
+
+        Status initialize();
 
     private:
         MaskLayerOptions              _initOptions;
@@ -135,7 +141,7 @@ namespace osgEarth
         osg::ref_ptr<MaskSource>      _maskSource;
         Revision                      _maskSourceRev;
         osg::ref_ptr<osg::Vec3dArray> _boundary;
-        osg::ref_ptr<osgDB::Options>  _dbOptions;
+        osg::ref_ptr<osgDB::Options>  _readOptions;
         OpenThreads::Mutex            _mutex;
 
         void copyOptions();

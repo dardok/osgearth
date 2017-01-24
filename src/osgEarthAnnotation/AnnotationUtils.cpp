@@ -1,6 +1,6 @@
 /* -*-c++-*- */
 /* osgEarth - Dynamic map generation toolkit for OpenSceneGraph
-* Copyright 2015 Pelican Mapping
+* Copyright 2016 Pelican Mapping
 * http://osgearth.org
 *
 * osgEarth is free software; you can redistribute it and/or modify
@@ -85,6 +85,20 @@ AnnotationUtils::convertTextSymbolEncoding (const TextSymbol::Encoding encoding)
     }
 
     return text_encoding;
+}
+
+namespace
+{
+    static int nextPowerOf2(int x)
+    {
+        --x;
+        x |= x >> 1;
+        x |= x >> 2;
+        x |= x >> 4;
+        x |= x >> 8;
+        x |= x >> 16;
+        return x+1;
+    }
 }
 
 osg::Drawable*
@@ -209,8 +223,11 @@ AnnotationUtils::createTextDrawable(const std::string& text,
         font->setGlyphImageMargin( 2 );
     }
 
-    t->setFontResolution( size, size );
-    t->setBackdropOffset( (float)t->getFontWidth() / 256.0f, (float)t->getFontHeight() / 256.0f );
+    float resFactor = 2.0f;
+    int res = nextPowerOf2((int)(size*resFactor));
+    t->setFontResolution(res, res);
+    float offsetFactor = 1.0f / (resFactor*256.0f);
+    t->setBackdropOffset( (float)t->getFontWidth() * offsetFactor, (float)t->getFontHeight() * offsetFactor );
 
     if ( symbol && symbol->halo().isSet() )
     {
@@ -473,6 +490,7 @@ AnnotationUtils::createEllipsoidGeometry(float xRadius,
     osg::Vec3Array* verts = new osg::Vec3Array();
     verts->reserve( latSegments * lonSegments );
 
+#if 0
     bool genTexCoords = false; // TODO: optional
     osg::Vec2Array* texCoords = 0;
     if (genTexCoords)
@@ -481,6 +499,7 @@ AnnotationUtils::createEllipsoidGeometry(float xRadius,
         texCoords->reserve( latSegments * lonSegments );
         geom->setTexCoordArray( 0, texCoords );
     }
+#endif
 
     osg::Vec3Array* normals = new osg::Vec3Array();
     normals->reserve( latSegments * lonSegments );
@@ -509,18 +528,17 @@ AnnotationUtils::createEllipsoidGeometry(float xRadius,
                 yRadius * sin_u * cos_v,
                 zRadius * sin_v ));
 
+#if 0
             if (genTexCoords)
             {
                 double s = (lon + 180) / 360.0;
                 double t = (lat + 90.0) / 180.0;
                 texCoords->push_back( osg::Vec2(s, t ) );
             }
+#endif
 
-            if (normals)
-            {
-                normals->push_back( verts->back() );
-                normals->back().normalize();
-            }
+            normals->push_back( verts->back() );
+            normals->back().normalize();
 
             if ( y < latSegments )
             {

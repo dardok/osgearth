@@ -1,6 +1,6 @@
 /* -*-c++-*- */
 /* osgEarth - Dynamic map generation toolkit for OpenSceneGraph
- * Copyright 2015 Pelican Mapping
+ * Copyright 2016 Pelican Mapping
  * http://osgearth.org
  *
  * osgEarth is free software; you can redistribute it and/or modify
@@ -21,10 +21,19 @@
 using namespace osgEarth;
 using namespace osgEarth::Symbology;
 
-Query::Query( const Config& conf ):
-_map(0)
+Query::Query( const Config& conf )
 {
     mergeConfig( conf );
+}
+
+Query::Query(const Query& rhs) :
+_bounds(rhs._bounds),
+_expression(rhs._expression),
+_orderby(rhs._orderby),
+_tileKey(rhs._tileKey),
+_mapFrame(rhs._mapFrame)
+{
+    //nop
 }
 
 void
@@ -119,12 +128,13 @@ Query::combineWith( const Query& rhs ) const
     return merged;
 }
 
-const Map* Query::getMap() const
-{
-    return _map;
-}
-
 void Query::setMap(const Map* map)
 {
-    _map = map;
+    _mapFrame.setMap(map);
 }
+
+void Query::setMap(const MapFrame& mapf)
+{
+    _mapFrame = mapf;
+}
+

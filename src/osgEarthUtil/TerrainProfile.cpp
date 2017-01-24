@@ -1,6 +1,6 @@
 /* -*-c++-*- */
 /* osgEarth - Dynamic map generation toolkit for OpenSceneGraph
-* Copyright 2015 Pelican Mapping
+* Copyright 2016 Pelican Mapping
 * http://osgearth.org
 *
 * osgEarth is free software; you can redistribute it and/or modify
@@ -185,7 +185,7 @@ void TerrainProfileCalculator::setStartEnd(const GeoPoint& start, const GeoPoint
     }
 }
 
-void TerrainProfileCalculator::onTileAdded(const osgEarth::TileKey& tileKey, osg::Node* terrain, TerrainCallbackContext&)
+void TerrainProfileCalculator::onTileAdded(const osgEarth::TileKey& tileKey, osg::Node* graph, TerrainCallbackContext&)
 {
     if (_start.isValid() && _end.isValid())
     {

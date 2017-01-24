@@ -1,6 +1,6 @@
 /* -*-c++-*- */
 /* osgEarth - Dynamic map generation toolkit for OpenSceneGraph
- * Copyright 2015 Pelican Mapping
+ * Copyright 2016 Pelican Mapping
  * http://osgearth.org
  *
  * osgEarth is free software; you can redistribute it and/or modify
@@ -168,6 +168,11 @@ namespace osgEarth
         bool transform(const SpatialReference* outSRS, GeoPoint& output) const;
 
         /**
+         * Transforms this point in place to another SRS.
+         */
+        bool transformInPlace(const SpatialReference* srs);
+
+        /**
          * Transforms this geopoint's Z coordinate (in place)
          */
         bool transformZ(const AltitudeMode& altMode, const TerrainResolver* t );
@@ -240,6 +245,11 @@ namespace osgEarth
         bool isValid() const { return _srs.valid(); }
 
         Config getConfig() const;
+
+        /**
+         * Represent this point as a string
+         */
+        std::string toString() const;
 
     public:
         static GeoPoint INVALID;
@@ -527,9 +537,11 @@ namespace osgEarth
         virtual ~DataExtent() { }
 
         /** The minimum LOD of the extent */
+        optional<unsigned>& minLevel() { return _minLevel; }
         const optional<unsigned>& minLevel() const { return _minLevel; }
 
         /** The maximum LOD of the extent */
+        optional<unsigned>& maxLevel() { return _maxLevel; }
         const optional<unsigned>& maxLevel() const { return _maxLevel; }
 
     private:

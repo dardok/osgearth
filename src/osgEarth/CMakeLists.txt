@@ -9,6 +9,12 @@ MARK_AS_ADVANCED(CURL_IS_STATIC)
 
 ADD_DEFINITIONS(-DTIXML_USE_STL)
 
+# Builds the HTTPClient with WIN_INET instead of CURL
+OPTION(OSGEARTH_USE_WININET_FOR_HTTP "Whether to use the WinInet library for HTTP requests (instead of cURL)" OFF)
+if (OSGEARTH_USE_WININET_FOR_HTTP)
+    ADD_DEFINITIONS(-DOSGEARTH_USE_WININET_FOR_HTTP)
+endif (OSGEARTH_USE_WININET_FOR_HTTP)
+
 IF(WIN32)
     IF(MSVC)
         SET(CMAKE_SHARED_LINKER_FLAGS_DEBUG "${CMAKE_SHARED_LINKER_FLAGS_DEBUG} /NODEFAULTLIB:MSVCRT")
@@ -30,7 +36,9 @@ set(TARGET_GLSL
     GPUClamping.vert.glsl
     GPUClamping.vert.lib.glsl
     GPUClamping.frag.glsl
-    Instancing.vert.glsl)
+    Instancing.vert.glsl
+    PhongLighting.vert.glsl
+    PhongLighting.frag.glsl)
 
 set(SHADERS_CPP "${CMAKE_CURRENT_BINARY_DIR}/AutoGenShaders.cpp")
 
@@ -65,7 +73,7 @@ SET(LIB_PUBLIC_HEADERS
     Cube
     CullingUtils
     DateTime
-	DateTimeRange
+    DateTimeRange
     DepthOffset
     DPLineSegmentIntersector
     DrapeableNode
@@ -73,20 +81,21 @@ SET(LIB_PUBLIC_HEADERS
     DrapingTechnique
     DrawInstanced
     ECEF
-    ElevationField
     ElevationLayer
     ElevationLOD
+    ElevationPool
     ElevationQuery
     Export
-	Extension
+    Extension
     FadeEffect
     FileUtils
     GeoCommon
     GeoData
     Geoid
     GeoMath
-	GeoTransform
+    GeoTransform
     GeometryClamper
+    GLSLChunker
     HeightFieldUtils
     Horizon
     HTTPClient
@@ -94,9 +103,11 @@ SET(LIB_PUBLIC_HEADERS
     ImageMosaic
     ImageToHeightFieldConverter
     ImageUtils
+    IntersectionPicker
     IOTypes
     JsonUtils
     Layer
+    Lighting
     LineFunctor
     Locators
     LocalTangentPlane
@@ -114,6 +125,7 @@ SET(LIB_PUBLIC_HEADERS
     MaskSource
     Memory
     MemCache
+    Metrics
     ModelLayer
     ModelSource
     NativeProgramAdapter
@@ -123,16 +135,18 @@ SET(LIB_PUBLIC_HEADERS
     ObjectIndex
     OverlayDecorator
     OverlayNode
-	PhongLightingEffect
+    PatchLayer
+    PhongLightingEffect
     Picker
-    IntersectionPicker
+    PluginLoader
     PrimitiveIntersector
     Profile
     Profiler
     Progress
-	QuadTree
+    QuadTree
     Random
     Registry
+    ResourceReleaser
     Revisioning
     ScreenSpaceLayout
     Shaders
@@ -141,10 +155,11 @@ SET(LIB_PUBLIC_HEADERS
     ShaderLoader
     ShaderUtils
     Shadowing
-	SharedSARepo
+    SharedSARepo
     SpatialReference
     StateSetCache
-	StateSetLOD
+    StateSetLOD
+    Status
     StringUtils
     TaskService
     Terrain
@@ -162,7 +177,8 @@ SET(LIB_PUBLIC_HEADERS
     TextureCompositor
     TileKey
     TileHandler
-	TileSource
+    TileRasterizer
+    TileSource
     TileVisitor
     TimeControl
     TraversalData
@@ -182,7 +198,7 @@ IF (NOT TINYXML_FOUND)
     SET(LIB_PUBLIC_HEADERS
         ${LIB_PUBLIC_HEADERS}
         tinystr.h
-        tinyxml.h 
+        tinyxml.h
     )
 ENDIF (NOT TINYXML_FOUND)
 
@@ -199,14 +215,14 @@ ENDIF (NOT TINYXML_FOUND)
 SET(VERSION_GIT_SOURCE "")
 IF (OSGEARTH_EMBED_GIT_SHA)
 	ADD_DEFINITIONS(-DOSGEARTH_EMBED_GIT_SHA)
-	
+
 	# auto-generate the VersionGit file to include the git SHA1 variable.
 	configure_file(
 		"${CMAKE_CURRENT_SOURCE_DIR}/VersionGit.cpp.in"
-		"${CMAKE_CURRENT_BINARY_DIR}/VersionGit.cpp" 
+		"${CMAKE_CURRENT_BINARY_DIR}/VersionGit.cpp"
 		@ONLY)
-    
-	set(VERSION_GIT_SOURCE "${CMAKE_CURRENT_BINARY_DIR}/VersionGit.cpp")	
+
+	set(VERSION_GIT_SOURCE "${CMAKE_CURRENT_BINARY_DIR}/VersionGit.cpp")
 ENDIF (OSGEARTH_EMBED_GIT_SHA)
 
 set(TARGET_SRC
@@ -228,7 +244,7 @@ set(TARGET_SRC
     Cube.cpp
     CullingUtils.cpp
     DateTime.cpp
-	DateTimeRange.cpp
+    DateTimeRange.cpp
     DepthOffset.cpp
     DPLineSegmentIntersector.cpp
     DrapeableNode.cpp
@@ -236,18 +252,19 @@ set(TARGET_SRC
     DrapingTechnique.cpp
     DrawInstanced.cpp
     ECEF.cpp
-    ElevationField.cpp
     ElevationLayer.cpp
     ElevationLOD.cpp
+    ElevationPool.cpp
     ElevationQuery.cpp
-	Extension.cpp
+    Extension.cpp
     FadeEffect.cpp
     FileUtils.cpp
     GeoData.cpp
     Geoid.cpp
     GeoMath.cpp
-	GeoTransform.cpp
+    GeoTransform.cpp
     GeometryClamper.cpp
+    GLSLChunker.cpp
     HeightFieldUtils.cpp
     Horizon.cpp
     HTTPClient.cpp
@@ -255,9 +272,11 @@ set(TARGET_SRC
     ImageMosaic.cpp
     ImageToHeightFieldConverter.cpp
     ImageUtils.cpp
+    IntersectionPicker.cpp
     IOTypes.cpp
     JsonUtils.cpp
     Layer.cpp
+    Lighting.cpp
     Locators.cpp
     LocalTangentPlane.cpp
     Map.cpp
@@ -272,6 +291,7 @@ set(TARGET_SRC
     MaskSource.cpp
     MemCache.cpp
     Memory.cpp
+    Metrics.cpp
     MimeTypes.cpp
     ModelLayer.cpp
     ModelSource.cpp
@@ -280,15 +300,16 @@ set(TARGET_SRC
     ObjectIndex.cpp
     OverlayDecorator.cpp
     OverlayNode.cpp
-	PhongLightingEffect.cpp
-    IntersectionPicker.cpp
+    PatchLayer.cpp
+    PhongLightingEffect.cpp
     PrimitiveIntersector.cpp
     Profile.cpp
     Profiler.cpp
     Progress.cpp
-	QuadTree.cpp
+    QuadTree.cpp
     Random.cpp
     Registry.cpp
+    ResourceReleaser.cpp
     Revisioning.cpp
     ScreenSpaceLayout.cpp
     ShaderFactory.cpp
@@ -298,7 +319,8 @@ set(TARGET_SRC
     Shadowing.cpp
     SpatialReference.cpp
     StateSetCache.cpp
-	StateSetLOD.cpp
+    StateSetLOD.cpp
+    Status.cpp
     StringUtils.cpp
     TaskService.cpp
     Terrain.cpp
@@ -313,6 +335,7 @@ set(TARGET_SRC
     TileKey.cpp
     TileHandler.cpp
     TilePatchCallback.cpp
+    TileRasterizer.cpp
     TileVisitor.cpp
     TileSource.cpp
     TimeControl.cpp
@@ -330,11 +353,11 @@ set(TARGET_SRC
 
 
 ADD_LIBRARY(
-	${LIB_NAME} ${OSGEARTH_USER_DEFINED_DYNAMIC_OR_STATIC}
+    ${LIB_NAME} ${OSGEARTH_USER_DEFINED_DYNAMIC_OR_STATIC}
     ${LIB_PUBLIC_HEADERS}
     ${TINYXML_SRC}
     ${VERSION_GIT_SOURCE}
-	${TARGET_SRC}
+    ${TARGET_SRC}
     ${TARGET_GLSL}
     ${TARGET_IN} )
 

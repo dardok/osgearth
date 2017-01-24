@@ -1,6 +1,6 @@
 /* -*-c++-*- */
 /* osgEarth - Dynamic map generation toolkit for OpenSceneGraph
- * Copyright 2015 Pelican Mapping
+ * Copyright 2016 Pelican Mapping
  * http://osgearth.org
  *
  * osgEarth is free software; you can redistribute it and/or modify
@@ -75,7 +75,7 @@ struct ReaderWriterKML : public osgDB::ReaderWriter
         {
             // propagate the source URI along to the stream reader
             osg::ref_ptr<osgDB::Options> myOptions = Registry::instance()->cloneOrCreateOptions(dbOptions);
-            URIContext(url).apply( myOptions.get() );
+            URIContext(url).store( myOptions.get() );
             return readNode( URIStream(url), myOptions.get() );
         }
     }

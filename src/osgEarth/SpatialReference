@@ -1,6 +1,6 @@
 /* -*-c++-*- */
 /* osgEarth - Dynamic map generation toolkit for OpenSceneGraph
- * Copyright 2015 Pelican Mapping
+ * Copyright 2016 Pelican Mapping
  * http://osgearth.org
  *
  * osgEarth is free software; you can redistribute it and/or modify
@@ -333,6 +333,10 @@ namespace osgEarth
 		 */
 		void* getHandle() const { return _handle;}
 
+        /**
+         * Guess at an appropriate bounding box for this SRS.
+         */
+        bool guessBounds(Bounds& output) const;
 
 
     protected:

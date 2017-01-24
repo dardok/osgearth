@@ -23,6 +23,7 @@
 #include <osgEarth/TileKey>
 #include <osgEarth/Registry>
 #include <osgEarth/Horizon>
+#include <osgEarth/ImageUtils>
 
 #include <osg/CullStack>
 #include <osg/Geode>
@@ -44,9 +45,9 @@ using namespace osgEarth;
 
 namespace
 {    
-    osg::Geode* makeBBox(const osg::BoundingBox& bbox, const TileKey& key)
+    osg::Group* makeBBox(const osg::BoundingBox& bbox, const TileKey& key)
     {        
-        osg::Geode* geode = new osg::Geode();
+        osg::Group* geode = new osg::Group();
         std::string sizeStr = "(empty)";
         float zpos = 0.0f;
 
@@ -62,7 +63,7 @@ namespace
 
             osg::DrawElementsUByte* de = new osg::DrawElementsUByte(GL_LINES);
 
-#if 0
+#if 1
             // bottom:
             de->push_back(0); de->push_back(1);
             de->push_back(1); de->push_back(3);
@@ -90,7 +91,7 @@ namespace
             geom->setColorArray(c);
             geom->setColorBinding(geom->BIND_OVERALL);
 
-            geode->addDrawable(geom);
+            geode->addChild(geom);
 
             sizeStr = Stringify() << key.str() << "\nmax="<<bbox.zMax()<<"\nmin="<<bbox.zMin()<<"\n";
             zpos = bbox.zMax();
@@ -108,13 +109,64 @@ namespace
         textDrawable->setBackdropType(textDrawable->OUTLINE);
         textDrawable->setPosition(osg::Vec3(0,0,zpos));
         textDrawable->setAutoRotateToScreen(true);
-        geode->addDrawable(textDrawable);
+        geode->addChild(textDrawable);
 
         geode->getOrCreateStateSet()->setAttributeAndModes(new osg::Program(),0);
         geode->getOrCreateStateSet()->setMode(GL_LIGHTING,0);
         geode->getOrCreateStateSet()->setRenderBinDetails(INT_MAX, "DepthSortedBin");
 
         return geode;
+    }
+
+    osg::Drawable* makeSphere(const osg::BoundingSphere& bs)
+    {
+        osg::Geometry* geom = new osg::Geometry();
+        geom->setUseVertexBufferObjects(true);
+
+        float r = bs.radius();
+
+        osg::Vec3Array* v = new osg::Vec3Array();
+        v->reserve(6);
+        v->push_back(osg::Vec3(0, 0, r)); // top
+        v->push_back(osg::Vec3(0, 0, -r)); // bottom
+        v->push_back(osg::Vec3(-r, 0, 0)); // left
+        v->push_back(osg::Vec3(r, 0, 0)); // right
+        v->push_back(osg::Vec3(0, r, 0)); // back
+        v->push_back(osg::Vec3(0, -r, 0)); // front
+        geom->setVertexArray(v);
+
+        osg::DrawElementsUByte* b = new osg::DrawElementsUByte(GL_LINE_STRIP);
+        b->reserve(24);
+        b->push_back(0); b->push_back(3); b->push_back(4);
+        b->push_back(0); b->push_back(4); b->push_back(2);
+        b->push_back(0); b->push_back(2); b->push_back(5);
+        b->push_back(0); b->push_back(5); b->push_back(3);
+        b->push_back(1); b->push_back(3); b->push_back(5);
+        b->push_back(1); b->push_back(4); b->push_back(3);
+        b->push_back(1); b->push_back(2); b->push_back(4);
+        b->push_back(1); b->push_back(5); b->push_back(2);
+        geom->addPrimitiveSet(b);
+
+        osg::Vec3Array* n = new osg::Vec3Array();
+        n->reserve(6);
+        n->push_back(osg::Vec3(0, 0, 1));
+        n->push_back(osg::Vec3(0, 0, -1));
+        n->push_back(osg::Vec3(-1, 0, 0));
+        n->push_back(osg::Vec3(1, 0, 0));
+        n->push_back(osg::Vec3(0, 1, 0));
+        n->push_back(osg::Vec3(0, -1, 0));
+        geom->setNormalArray(n);
+        geom->setNormalBinding(osg::Geometry::BIND_PER_VERTEX);
+
+        //MeshSubdivider ms;
+        //ms.run(*geom, osg::DegreesToRadians(maxAngle), GEOINTERP_GREAT_CIRCLE);
+
+        osg::Vec4Array* c = new osg::Vec4Array(1);
+        (*c)[0].set(1,1,0,1);
+        geom->setColorArray(c);
+        geom->setColorBinding(osg::Geometry::BIND_OVERALL);
+
+        return geom;
     }
 }
 
@@ -125,29 +177,49 @@ HorizonTileCuller::set(const SpatialReference* srs,
                        const osg::Matrix&      local2world,
                        const osg::BoundingBox& bbox)
 {
-    if ( !_horizon.valid() )
-        _horizon = new Horizon();
-
-    _horizon->setEllipsoid(*srs->getEllipsoid());
-    _radiusPolar = srs->getEllipsoid()->getRadiusPolar();
-    _radiusEquator = srs->getEllipsoid()->getRadiusEquator();
-    _local2world = local2world;
-
-    // Adjust the horizon ellipsoid based on the minimum Z value of the tile;
-    // necessary because a tile that's below the ellipsoid (ocean floor, e.g.)
-    // may be visible even if it doesn't pass the horizon-cone test. In such
-    // cases we need a more conservative ellipsoid.
-    double zMin = (double)std::min( bbox.corner(0).z(), 0.0f );
-    _horizon->setEllipsoid( osg::EllipsoidModel(_radiusEquator + zMin, _radiusPolar + zMin) );
-
-    // consider the uppermost 4 points of the tile-aligned bounding box.
-    // (the last four corners of the bbox are the "zmax" corners.)
-    for(unsigned i=0; i<4; ++i)
+    if (!_horizon.valid() && srs->isGeographic())
     {
-        _points[i] = bbox.corner(4+i) * _local2world;
+        _horizon = new Horizon();
+    }
+
+    if (_horizon.valid())
+    {
+        _horizon->setEllipsoid(*srs->getEllipsoid());
+
+        // Adjust the horizon ellipsoid based on the minimum Z value of the tile;
+        // necessary because a tile that's below the ellipsoid (ocean floor, e.g.)
+        // may be visible even if it doesn't pass the horizon-cone test. In such
+        // cases we need a more conservative ellipsoid.
+        double zMin = (double)std::min( bbox.corner(0).z(), 0.0f );
+        zMin = std::max(zMin, -25000.0); // approx the lowest point on earth * 2
+        _horizon->setEllipsoid( osg::EllipsoidModel(
+            srs->getEllipsoid()->getRadiusEquator() + zMin, 
+            srs->getEllipsoid()->getRadiusPolar() + zMin) );
+
+        // consider the uppermost 4 points of the tile-aligned bounding box.
+        // (the last four corners of the bbox are the "zmax" corners.)
+        for(unsigned i=0; i<4; ++i)
+        {
+            _points[i] = bbox.corner(4+i) * local2world;
+        }
     }
 }
 
+bool
+HorizonTileCuller::isVisible(const osg::Vec3d& from) const
+{
+    if (!_horizon.valid())
+        return true;
+
+    // alternate method (slower)
+    //return _horizon->isVisible(from, _bs.center(), _bs.radius());
+
+    for (unsigned i = 0; i < 4; ++i)
+        if (_horizon->isVisible(from, _points[i], 0.0))
+            return true;
+
+    return false;
+}
 
 //..............................................................
 
@@ -163,11 +235,8 @@ SurfaceNode::SurfaceNode(const TileKey&        tilekey,
 
     _drawable = drawable;
 
-    _surfaceGeode = new osg::Geode();
-    _surfaceGeode->addDrawable( drawable );
-    
     // Create the final node.
-    addChild( _surfaceGeode.get() );
+    addChild(_drawable.get());
 
     // Establish a local reference frame for the tile:
     GeoPoint centroid;
@@ -179,6 +248,19 @@ SurfaceNode::SurfaceNode(const TileKey&        tilekey,
     
     // Initialize the cached bounding box.
     setElevationRaster( 0L, osg::Matrixf::identity() );
+}
+
+osg::BoundingSphere
+SurfaceNode::computeBound() const
+{
+    osg::Matrix l2w;
+    computeLocalToWorldMatrix(l2w, 0L);
+    osg::BoundingSphere bs;
+    osg::BoundingBox box = _drawable->getBoundingBox();
+    for (unsigned i=0; i<8; ++i)
+        bs.expandBy(box.corner(i)*l2w);
+
+    return bs;
 }
 
 void

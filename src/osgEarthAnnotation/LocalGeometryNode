@@ -1,6 +1,6 @@
 /* -*-c++-*- */
 /* osgEarth - Dynamic map generation toolkit for OpenSceneGraph
-* Copyright 2015 Pelican Mapping
+* Copyright 2016 Pelican Mapping
 * http://osgearth.org
 *
 * osgEarth is free software; you can redistribute it and/or modify
@@ -113,14 +113,14 @@ namespace osgEarth { namespace Annotation
 
     public: // osg::Node
 
-        virtual osg::BoundingSphere computeBound() const;
+        //virtual osg::BoundingSphere computeBound() const;
 
     protected: // GeoPositionNode
 
         virtual void dirty();
 
     protected:
-        LocalGeometryNode() { }
+        LocalGeometryNode();
 
         Style                        _style;
         osg::ref_ptr<osg::Node>      _node;
@@ -129,7 +129,7 @@ namespace osgEarth { namespace Annotation
         typedef TerrainCallbackAdapter<LocalGeometryNode> ClampCallback;
         osg::ref_ptr<ClampCallback> _clampCallback;
         bool _clampRelative;
-        mutable osg::Polytope _boundingPT;
+        //mutable osg::Polytope _boundingPT;
 
         void initNode();
         void initGeometry(const osgDB::Options*);
@@ -140,11 +140,11 @@ namespace osgEarth { namespace Annotation
     public:
         void onTileAdded(
             const TileKey&          key, 
-            osg::Node*              tile, 
+            osg::Node*              graph, 
             TerrainCallbackContext& context);
 
-        virtual void clampToScene(
-            osg::Node*     tile,
+        virtual void clamp(
+            osg::Node*     graph,
             const Terrain* terrain);
     };
 

@@ -1,6 +1,6 @@
 /* -*-c++-*- */
 /* osgEarth - Dynamic map generation toolkit for OpenSceneGraph
- * Copyright 2015 Pelican Mapping
+ * Copyright 2016 Pelican Mapping
  * http://osgearth.org
  *
  * osgEarth is free software; you can redistribute it and/or modify
@@ -31,18 +31,9 @@ using namespace osgEarth::Annotation;
 
 //.........................................................................
 
-AnnotationExtension::AnnotationExtension()
-{
-    //nop
-}
 
 AnnotationExtension::AnnotationExtension(const ConfigOptions& co) :
 ConfigOptions( co )
-{
-    //nop
-}
-
-AnnotationExtension::~AnnotationExtension()
 {
     //nop
 }
@@ -97,4 +88,4 @@ AnnotationExtension::disconnect(MapNode* mapNode)
 }
 
 REGISTER_OSGEARTH_EXTENSION(osgearth_annotations, AnnotationExtension);
-REGISTER_OSGEARTH_EXTENSION(osgearth_annotation,  AnnotationExtension);
+//REGISTER_OSGEARTH_EXTENSION(osgearth_annotation,  AnnotationExtension);

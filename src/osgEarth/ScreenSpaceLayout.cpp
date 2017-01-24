@@ -1,6 +1,6 @@
 /* -*-c++-*- */
 /* osgEarth - Dynamic map generation toolkit for OpenSceneGraph
-* Copyright 2015 Pelican Mapping
+* Copyright 2016 Pelican Mapping
 * http://osgearth.org
 *
 * osgEarth is free software; you can redistribute it and/or modify
@@ -24,6 +24,7 @@
 #include <osgEarth/Containers>
 #include <osgEarth/Utils>
 #include <osgEarth/VirtualProgram>
+#include <osgEarth/Extension>
 #include <osgEarthAnnotation/BboxDrawable>
 #include <osgUtil/RenderBin>
 #include <osgUtil/StateGraph>
@@ -73,6 +74,44 @@ namespace
         }
     };
 
+    // Custom sorting functor that sorts drawables by Priority, and when drawables share the
+    // same parent Geode, sorts them in traversal order.
+    struct SortByPriorityPreservingGeodeTraversalOrder : public DeclutterSortFunctor
+    {
+        bool operator()( const osgUtil::RenderLeaf* lhs, const osgUtil::RenderLeaf* rhs ) const
+        {
+            const osg::Node* lhsParentNode = lhs->getDrawable()->getParent(0);
+            if ( lhsParentNode == rhs->getDrawable()->getParent(0) )
+            {
+                const osg::Geode* geode = static_cast<const osg::Geode*>(lhsParentNode);
+                return geode->getDrawableIndex(lhs->getDrawable()) > geode->getDrawableIndex(rhs->getDrawable());
+            }
+
+            else
+            {            
+                const ScreenSpaceLayoutData* lhsdata = dynamic_cast<const ScreenSpaceLayoutData*>(lhs->getDrawable()->getUserData());
+                float lhsPriority = lhsdata ? lhsdata->_priority : 0.0f;
+    
+                const ScreenSpaceLayoutData* rhsdata = dynamic_cast<const ScreenSpaceLayoutData*>(rhs->getDrawable()->getUserData());
+                float rhsPriority = rhsdata ? rhsdata->_priority : 0.0f;
+
+                float diff = lhsPriority - rhsPriority;
+
+                if ( diff != 0.0f )
+                    return diff > 0.0f;
+
+                // first fallback on depth:
+                diff = lhs->_depth - rhs->_depth;
+                if ( diff != 0.0f )
+                    return diff < 0.0f;
+
+                // then fallback on traversal order.
+                diff = float(lhs->_traversalNumber) - float(rhs->_traversalNumber);
+                return diff < 0.0f;
+            }
+        }
+    };
+
     // Data structure shared across entire layout system.
     struct ScreenSpaceLayoutContext : public osg::Referenced
     {
@@ -95,7 +134,7 @@ namespace
     // Data structure stored one-per-View.
     struct PerCamInfo
     {
-        PerCamInfo() : _firstFrame(true) { }
+        PerCamInfo() : _lastTimeStamp(0), _firstFrame(true) { }
 
         // remembers the state of each drawable from the previous pass
         DrawableMemory _memory;
@@ -133,6 +172,7 @@ ScreenSpaceLayoutOptions::fromConfig( const Config& conf )
     conf.getIfSet( "sort_by_priority",    _sortByPriority );
     conf.getIfSet( "snap_to_pixel",       _snapToPixel );
     conf.getIfSet( "max_objects",         _maxObjects );
+    conf.getIfSet( "render_order",        _renderBinNumber );
 }
 
 Config
@@ -146,6 +186,7 @@ ScreenSpaceLayoutOptions::getConfig() const
     conf.addIfSet( "sort_by_priority",    _sortByPriority );
     conf.addIfSet( "snap_to_pixel",       _snapToPixel );
     conf.addIfSet( "max_objects",         _maxObjects );
+    conf.addIfSet( "render_order",        _renderBinNumber );
     return conf;
 }
 
@@ -264,6 +305,13 @@ struct /*internal*/ DeclutterSort : public osgUtil::RenderBin::SortCallback
 
         bool snapToPixel = options.snapToPixel() == true;
 
+        osg::Matrix camVPW;
+        camVPW.postMult(cam->getViewMatrix());
+        camVPW.postMult(cam->getProjectionMatrix());
+        camVPW.postMult(refWindowMatrix);
+        //if (cam->getViewport())
+        //    camVPW.postMult(cam->getViewport()->computeWindowMatrix());
+
         // Go through each leaf and test for visibility.
         // Enforce the "max objects" limit along the way.
         for(osgUtil::RenderBin::RenderLeafList::iterator i = leaves.begin(); 
@@ -283,13 +331,20 @@ struct /*internal*/ DeclutterSort : public osgUtil::RenderBin::SortCallback
 
             osg::Vec3f offset;
             osg::Quat rot;
+
             if (layoutData)
             {
-
                 // local transformation data
                 // and management of the label orientation (must be always readable)
+
                 bool isText = dynamic_cast<const osgText::Text*>(drawable) != 0L;
-                float angle = layoutData->_localRotationRad;
+
+                osg::Vec3d loc = layoutData->getAnchorPoint() * camVPW;
+                osg::Vec3d proj = layoutData->getProjPoint() * camVPW;
+                proj -= loc;
+                
+                float angle = atan2(proj.y(), proj.x());
+
                 if ( isText && (angle < - osg::PI / 2. || angle > osg::PI / 2.) )
                 {
                     // avoid the label characters to be inverted:
@@ -303,12 +358,6 @@ struct /*internal*/ DeclutterSort : public osgUtil::RenderBin::SortCallback
                 {
                     offset.set( layoutData->_pixelOffset.x(), layoutData->_pixelOffset.y(), 0.f );
                 }
-
-                // handle the local translation
-                box.xMin() += offset.x();
-                box.xMax() += offset.x();
-                box.yMin() += offset.y();
-                box.yMax() += offset.y();
 
                 // handle the local rotation
                 if ( angle != 0.f )
@@ -325,6 +374,14 @@ struct /*internal*/ DeclutterSort : public osgUtil::RenderBin::SortCallback
                         box.set( std::min(ld.x(), lu.x()), std::min(lu.y(), ru.y()), 0,
                             std::max(ld.x(), lu.x()), std::max(ld.y(), rd.y()), 0 );
                 }
+
+                offset = refCamScaleMat * offset;
+
+                // handle the local translation
+                box.xMin() += offset.x();
+                box.xMax() += offset.x();
+                box.yMin() += offset.y();
+                box.yMax() += offset.y();
             }
 
             static osg::Vec4d s_zero_w(0,0,0,1);
@@ -355,7 +412,7 @@ struct /*internal*/ DeclutterSort : public osgUtil::RenderBin::SortCallback
                 
                 if ( info._lastXY.x() == winPos.x() && info._lastXY.y() == winPos.y() )
                 {
-                    // Quanitize the window draw coordinates so mitigate text rendering filtering anomalies.
+                    // Quanitize the window draw coordinates to mitigate text rendering filtering anomalies.
                     // Drawing text glyphs on pixel boundaries mitigates aliasing.
                     // Adding 0.5 will cause the GPU to sample the glyph texels exactly on center.
                     winPos.x() = floor(winPos.x()) + 0.5;
@@ -430,14 +487,15 @@ struct /*internal*/ DeclutterSort : public osgUtil::RenderBin::SortCallback
             if ( rot.zeroRotation() )
             {
                 newModelView.makeTranslate( osg::Vec3f(winPos.x() + offset.x(), winPos.y() + offset.y(), 0) );
+                newModelView.preMultScale( leaf->_modelview->getScale() * refCamScaleMat );
             }
             else
             {
                 offset = rot * offset;
                 newModelView.makeTranslate( osg::Vec3f(winPos.x() + offset.x(), winPos.y() + offset.y(), 0) );
+                newModelView.preMultScale( leaf->_modelview->getScale() * refCamScaleMat );
                 newModelView.preMultRotate( rot );
             }
-            newModelView.preMultScale( leaf->_modelview->getScale() * refCamScaleMat );
             
             // Leaf modelview matrixes are shared (by objects in the traversal stack) so we 
             // cannot just replace it unfortunately. Have to make a new one. Perhaps a nice
@@ -698,6 +756,8 @@ class osgEarthScreenSpaceLayoutRenderBin : public osgUtil::RenderBin
 public:
     osgEarthScreenSpaceLayoutRenderBin()
     {
+        _vpInstalled = false;
+
         this->setName( OSGEARTH_SCREEN_SPACE_LAYOUT_BIN );
         _context = new ScreenSpaceLayoutContext();
         clearSortingFunctor();
@@ -707,9 +767,33 @@ public:
         osg::StateSet* stateSet = new osg::StateSet();
         this->setStateSet( stateSet );
 
-        // set up a VP to do fading.
-        VirtualProgram* vp = VirtualProgram::getOrCreate(stateSet);
-        vp->setFunction( "oe_declutter_apply_fade", s_faderFS, ShaderComp::LOCATION_FRAGMENT_COLORING, 0.5f );
+        //VirtualProgram* vp = VirtualProgram::getOrCreate(stateSet);
+        //vp->setFunction( "oe_declutter_apply_fade", s_faderFS, ShaderComp::LOCATION_FRAGMENT_COLORING, 0.5f );
+    }
+
+    osgEarthScreenSpaceLayoutRenderBin(const osgEarthScreenSpaceLayoutRenderBin& rhs, const osg::CopyOp& copy)
+        : osgUtil::RenderBin(rhs, copy),
+        _f(rhs._f.get()),
+        _context(rhs._context.get())
+    {        
+        // Set up a VP to do fading. Do it here so it doesn't happen until the first time 
+        // we clone the render bin. This play nicely with static initialization.
+        if (!_vpInstalled)
+        {
+            Threading::ScopedMutexLock lock(_vpMutex);
+            if (!_vpInstalled)
+            {
+                VirtualProgram* vp = VirtualProgram::getOrCreate(getStateSet());
+                vp->setFunction( "oe_declutter_apply_fade", s_faderFS, ShaderComp::LOCATION_FRAGMENT_COLORING, 0.5f );
+                _vpInstalled = true;
+                OE_INFO << LC << "Decluttering VP installed\n";
+            }
+        }
+    }
+    
+    virtual osg::Object* clone(const osg::CopyOp& copyop) const
+    {
+        return new osgEarthScreenSpaceLayoutRenderBin(*this, copyop);
     }
 
     void setSortingFunctor( DeclutterSortFunctor* f )
@@ -725,15 +809,22 @@ public:
 
     osg::ref_ptr<DeclutterSortFunctor> _f;
     osg::ref_ptr<ScreenSpaceLayoutContext> _context;
+    static Threading::Mutex _vpMutex;
+    static bool _vpInstalled;
 };
+
+Threading::Mutex osgEarthScreenSpaceLayoutRenderBin::_vpMutex;
+bool osgEarthScreenSpaceLayoutRenderBin::_vpInstalled = false;
 
 //----------------------------------------------------------------------------
 
 void
-ScreenSpaceLayout::activate(osg::StateSet* stateSet, int binNum)
+ScreenSpaceLayout::activate(osg::StateSet* stateSet) //, int binNum)
 {
     if ( stateSet )
     {
+        int binNum = getOptions().renderOrder().get();
+
         // the OVERRIDE prevents subsequent statesets from disabling the layout bin
         stateSet->setRenderBinDetails(
             binNum,
@@ -800,7 +891,7 @@ ScreenSpaceLayout::setOptions( const ScreenSpaceLayoutOptions& options )
         if ( options.sortByPriority().isSetTo( true ) &&
              bin->_context->_options.sortByPriority() == false )
         {
-            ScreenSpaceLayout::setSortFunctor(new DeclutterByPriority());
+            ScreenSpaceLayout::setSortFunctor(new SortByPriorityPreservingGeodeTraversalOrder());
         }
         
         // communicate the new options on the shared context.
@@ -829,32 +920,30 @@ ScreenSpaceLayout::getOptions()
 
 //----------------------------------------------------------------------------
 
-bool
-DeclutterByPriority::operator()(const osgUtil::RenderLeaf* lhs, const osgUtil::RenderLeaf* rhs ) const
-{
-    const ScreenSpaceLayoutData* lhsdata = dynamic_cast<const ScreenSpaceLayoutData*>(lhs->getDrawable()->getUserData());
-    float lhsPriority = lhsdata ? lhsdata->_priority : 0.0f;
-    
-    const ScreenSpaceLayoutData* rhsdata = dynamic_cast<const ScreenSpaceLayoutData*>(rhs->getDrawable()->getUserData());
-    float rhsPriority = rhsdata ? rhsdata->_priority : 0.0f;
-
-    float diff = lhsPriority - rhsPriority;
-
-    if ( diff != 0.0f )
-        return diff > 0.0f;
-
-    // first fallback on depth:
-    diff = lhs->_depth - rhs->_depth;
-    if ( diff != 0.0f )
-        return diff < 0.0f;
-
-    // then fallback on traversal order.
-    diff = float(lhs->_traversalNumber) - float(rhs->_traversalNumber);
-    return diff < 0.0f;
-}
-
-//----------------------------------------------------------------------------
-
 /** the actual registration. */
 extern "C" void osgEarth_declutter(void) {}
 static osgEarthRegisterRenderBinProxy<osgEarthScreenSpaceLayoutRenderBin> s_regbin(OSGEARTH_SCREEN_SPACE_LAYOUT_BIN);
+
+
+//----------------------------------------------------------------------------
+
+// Extension for configuring the decluterring/SSL options from an Earth file.
+namespace osgEarth
+{
+    class ScreenSpaceLayoutExtension : public Extension,
+                                       public ScreenSpaceLayoutOptions
+    {
+    public:
+        META_osgEarth_Extension(ScreenSpaceLayoutExtension);
+
+        ScreenSpaceLayoutExtension(const ConfigOptions& co) : ScreenSpaceLayoutOptions(co)
+        {
+            // sets the global default options.
+            ScreenSpaceLayout::setOptions(*this);
+        }
+    };
+
+    REGISTER_OSGEARTH_EXTENSION(osgearth_screen_space_layout, ScreenSpaceLayoutExtension);
+    REGISTER_OSGEARTH_EXTENSION(osgearth_decluttering,        ScreenSpaceLayoutExtension);
+}
+                                       

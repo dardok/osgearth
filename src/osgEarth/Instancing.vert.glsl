@@ -7,10 +7,10 @@
 #pragma vp_order      0.0
 
 uniform samplerBuffer oe_di_postex_TBO;
-uniform int			  oe_di_postex_TBO_size;
 
 // Stage-global containing object ID
 uint oe_index_objectid;
+vec3 vp_Normal;
 
 void oe_di_setInstancePosition(inout vec4 VertexMODEL)
 { 
@@ -27,5 +27,11 @@ void oe_di_setInstancePosition(inout vec4 VertexMODEL)
     
     // rebuild positioning matrix and transform the vert. (Note, the matrix is actually
     // transposed so we have to reverse the multiplication order.)
-    VertexMODEL = VertexMODEL * mat4(m0, m1, m2, vec4(0,0,0,1));
+    mat4 xform = mat4(m0, m1, m2, vec4(0,0,0,1));
+
+    VertexMODEL = VertexMODEL * xform;
+
+    // rotate the normal vector in the same manner.
+    vp_Normal = vp_Normal * mat3(xform);
 }
+

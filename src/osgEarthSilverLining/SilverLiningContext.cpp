@@ -1,6 +1,6 @@
 /* -*-c++-*- */
 /* osgEarth - Dynamic map generation toolkit for OpenSceneGraph
- * Copyright 2015 Pelican Mapping
+ * Copyright 2016 Pelican Mapping
  * http://osgearth.org
  *
  * osgEarth is free software; you can redistribute it and/or modify
@@ -16,16 +16,58 @@
  * You should have received a copy of the GNU Lesser General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>
  */
-#include <SilverLining.h> // SilverLinking SDK
+#include <SilverLining.h> // SilverLining SDK
 #include "SilverLiningContext"
 #include "SilverLiningNode"
 #include <osg/Light>
+#include <osgDB/FileNameUtils>
 #include <osgEarth/SpatialReference>
+#include <cstdlib>
 
 #define LC "[SilverLiningContext] "
 
 using namespace osgEarth::SilverLining;
 
+
+/**
+ * Adapter that converts the return value of osgEarth::SilverLining::Callback::getMilliseconds()
+ * into a usable value for SilverLining using the SilverLining MillisecondTimer callback.
+ */
+class MillisecondTimerAdapter : public ::SilverLining::MillisecondTimer
+{
+public:
+    MillisecondTimerAdapter(SilverLiningContext* context) :
+    _context(context),
+    _defaultTimer(new ::SilverLining::MillisecondTimer)
+    {
+    }
+
+    virtual ~MillisecondTimerAdapter()
+    {
+        delete _defaultTimer;
+    }
+
+    virtual unsigned long SILVERLINING_API GetMilliseconds() const
+    {
+        osg::ref_ptr<SilverLiningContext> context;
+        unsigned long milliseconds = 0;
+        if (_context.lock(context))
+        {
+            osg::ref_ptr<Callback> callback = context->getCallback();
+            if (callback.valid())
+                milliseconds = callback->getMilliseconds();
+        }
+
+        // As per documentation, use the default SilverLining timer instead of returning 0
+        if (milliseconds != 0)
+            return milliseconds;
+        return _defaultTimer->GetMilliseconds();
+    }
+
+private:
+    osg::observer_ptr<SilverLiningContext> _context;
+    ::SilverLining::MillisecondTimer* _defaultTimer;
+};
 
 SilverLiningContext::SilverLiningContext(const SilverLiningOptions& options) :
 _options              ( options ),
@@ -35,6 +77,9 @@ _maxAmbientLightingAlt( -1.0 ),
 _atmosphere           ( 0L ),
 _minAmbient           ( 0,0,0,0 )
 {
+    // Create the millisecond timer that we'll use to control time
+    _msTimer = new MillisecondTimerAdapter(this);
+
     // Create a SL atmosphere (the main SL object).
     _atmosphere = new ::SilverLining::Atmosphere(
         options.user()->c_str(),
@@ -45,11 +90,9 @@ _minAmbient           ( 0,0,0,0 )
 
 SilverLiningContext::~SilverLiningContext()
 {
-    if ( _atmosphereWrapper )
-        delete _atmosphereWrapper;
-
-    if ( _atmosphere )
-        delete _atmosphere;
+    delete _atmosphereWrapper;
+    delete _atmosphere;
+    delete _msTimer;
 
     OE_INFO << LC << "Destroyed\n";
 }
@@ -93,9 +136,15 @@ SilverLiningContext::initialize(osg::RenderInfo& renderInfo)
             // TODO: replace this with something else since this is global! -gw
             ::srand(1234);
 
+            std::string resourcePath = _options.resourcePath().get();
+            if (resourcePath.empty() && ::getenv("SILVERLINING_PATH"))
+            {
+                resourcePath = osgDB::concatPaths(::getenv("SILVERLINING_PATH"), "Resources");
+            }
+
             int result = _atmosphere->Initialize(
                 ::SilverLining::Atmosphere::OPENGL,
-                _options.resourcePath()->c_str(),
+                resourcePath.c_str(),
                 true,
                 0 );
 
@@ -113,8 +162,11 @@ SilverLiningContext::initialize(osg::RenderInfo& renderInfo)
                 _atmosphere->SetUpVector( 0.0, 0.0, 1.0 );
                 _atmosphere->SetRightVector( 1.0, 0.0, 0.0 );
 
+                // Configure the timer used for animations
+                _atmosphere->GetConditions()->SetMillisecondTimer(_msTimer);
+
 #if 0 // todo: review this
-                _maxAmbientLightingAlt = 
+                _maxAmbientLightingAlt =
                     _atmosphere->GetConfigOptionDouble("atmosphere-height");
 #endif
                 if ( _options.drawClouds() == true )
@@ -148,7 +200,7 @@ SilverLiningContext::setupClouds()
 
     clouds->SeedClouds( *_atmosphere );
     clouds->GenerateShadowMaps( false );
-    
+
     clouds->SetLayerPosition(0, 0);
 
     _atmosphere->GetConditions()->AddCloudLayer( clouds );

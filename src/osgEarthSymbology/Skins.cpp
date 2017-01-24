@@ -1,6 +1,6 @@
 /* -*-c++-*- */
 /* osgEarth - Dynamic map generation toolkit for OpenSceneGraph
- * Copyright 2015 Pelican Mapping
+ * Copyright 2016 Pelican Mapping
  * http://osgearth.org
  *
  * osgEarth is free software; you can redistribute it and/or modify
@@ -215,16 +215,26 @@ SkinResource::createStateSet( osg::Image* image ) const
 osg::ref_ptr<osg::Image>
 SkinResource::createImage( const osgDB::Options* dbOptions ) const
 {
+    if (getStatus().isError())
+        return 0L;
+
     ReadResult result;
     if (_readOptions.isSet())
     {
-        osg::ref_ptr<osgDB::Options> ro = dbOptions ? osg::clone(dbOptions) : new osgDB::Options();
+        osg::ref_ptr<osgDB::Options> ro = Registry::cloneOrCreateOptions(dbOptions);
         ro->setOptionString(Stringify() << _readOptions.get() << " " << ro->getOptionString());
         result = _imageURI->readImage(ro.get());
     }
     else
     {
         result = _imageURI->readImage(dbOptions);
+    }
+
+    if (result.failed())
+    {
+        Threading::ScopedMutexLock lock(_mutex);
+        if (_status.isOK())
+            _status = Status::Error(Status::ServiceUnavailable, "Failed to load resource image\n");
     }
     return result.releaseImage();
 }

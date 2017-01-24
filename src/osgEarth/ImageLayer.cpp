@@ -1,6 +1,6 @@
 /* -*-c++-*- */
 /* osgEarth - Dynamic map generation toolkit for OpenSceneGraph
- * Copyright 2015 Pelican Mapping
+ * Copyright 2016 Pelican Mapping
  * http://osgearth.org
  *
  * osgEarth is free software; you can redistribute it and/or modify
@@ -28,6 +28,7 @@
 #include <osgEarth/MemCache>
 #include <osgEarth/Registry>
 #include <osgEarth/Capabilities>
+#include <osgEarth/Metrics>
 #include <osg/Version>
 #include <osgDB/WriteFile>
 #include <memory.h>
@@ -44,14 +45,28 @@ using namespace OpenThreads;
 
 //------------------------------------------------------------------------
 
-ImageLayerOptions::ImageLayerOptions( const ConfigOptions& options ) :
+ImageLayerOptions::ImageLayerOptions() :
+TerrainLayerOptions()
+{
+    setDefaults();
+    fromConfig(_conf);
+}
+
+ImageLayerOptions::ImageLayerOptions(const ConfigOptions& options) :
 TerrainLayerOptions(options)
 {
     setDefaults();
     fromConfig( _conf );
 }
 
-ImageLayerOptions::ImageLayerOptions( const std::string& name, const TileSourceOptions& driverOpt ) :
+ImageLayerOptions::ImageLayerOptions(const std::string& name) :
+TerrainLayerOptions(name)
+{
+    setDefaults();
+    fromConfig( _conf );
+}
+
+ImageLayerOptions::ImageLayerOptions(const std::string& name, const TileSourceOptions& driverOpt) :
 TerrainLayerOptions(name, driverOpt)
 {
     setDefaults();
@@ -81,7 +96,7 @@ ImageLayerOptions::mergeConfig( const Config& conf )
 }
 
 void
-ImageLayerOptions::fromConfig( const Config& conf )
+ImageLayerOptions::fromConfig(const Config& conf)
 {
     conf.getIfSet( "nodata_image",   _noDataImageFilename );
     conf.getIfSet( "opacity",        _opacity );
@@ -124,7 +139,7 @@ ImageLayerOptions::fromConfig( const Config& conf )
 }
 
 Config
-ImageLayerOptions::getConfig( bool isolate ) const
+ImageLayerOptions::getConfig(bool isolate) const
 {
     Config conf = TerrainLayerOptions::getConfig( isolate );
 
@@ -276,48 +291,105 @@ ImageLayerTileProcessor::process( osg::ref_ptr<osg::Image>& image ) const
 
 //------------------------------------------------------------------------
 
-ImageLayer::ImageLayer( const ImageLayerOptions& options ) :
-TerrainLayer( options, &_runtimeOptions ),
-_runtimeOptions( options )
+ImageLayer::ImageLayer(const ImageLayerOptions& options) :
+TerrainLayer(&_layerOptionsConcrete),
+_layerOptions(&_layerOptionsConcrete),
+_layerOptionsConcrete(options)
 {
     init();
 }
 
-ImageLayer::ImageLayer( const std::string& name, const TileSourceOptions& driverOptions ) :
-TerrainLayer   ( ImageLayerOptions(name, driverOptions), &_runtimeOptions ),
-_runtimeOptions( ImageLayerOptions(name, driverOptions) )
+ImageLayer::ImageLayer(const std::string& name, const TileSourceOptions& tileSourceOptions) :
+TerrainLayer(&_layerOptionsConcrete),
+_layerOptions(&_layerOptionsConcrete),
+_layerOptionsConcrete(name, tileSourceOptions)
 {
     init();
 }
 
-ImageLayer::ImageLayer( const ImageLayerOptions& options, TileSource* tileSource ) :
-TerrainLayer   ( options, &_runtimeOptions, tileSource ),
-_runtimeOptions( options )
+ImageLayer::ImageLayer(const ImageLayerOptions& options, TileSource* tileSource) :
+TerrainLayer(&_layerOptionsConcrete, tileSource),
+_layerOptions(&_layerOptionsConcrete),
+_layerOptionsConcrete(options)
 {
     init();
+}
+
+ImageLayer::ImageLayer(ImageLayerOptions* optionsPtr) :
+TerrainLayer(optionsPtr? optionsPtr : &_layerOptionsConcrete),
+_layerOptions(optionsPtr? optionsPtr : &_layerOptionsConcrete)
+{
+    //init(); // will be called by subclass.
+}
+
+const ImageLayerOptions&
+ImageLayer::getImageLayerOptions() const
+{
+    return *_layerOptions;
+}
+
+//ImageLayer::ImageLayer( const std::string& name, const TileSourceOptions& driverOptions ) :
+//TerrainLayer   ( ImageLayerOptions(name, driverOptions), &_runtimeOptions ),
+//_runtimeOptions( ImageLayerOptions(name, driverOptions) )
+//{
+//    init();
+//}
+//
+//ImageLayer::ImageLayer( const ImageLayerOptions& options, TileSource* tileSource ) :
+//TerrainLayer   ( options, &_runtimeOptions, tileSource ),
+//_runtimeOptions( options )
+//{
+//    init();
+//}
+
+const Status&
+ImageLayer::open()
+{
+    if (!createTextureSupported())
+        return TerrainLayer::open();
+    else
+        return getStatus();
 }
 
 void
 ImageLayer::init()
 {
+    TerrainLayer::init();
+
+    // image layers render as a terrain texture.
+    setRenderType(RENDERTYPE_TILE);
+
     // Set the tile size to 256 if it's not explicitly set.
-    if (!_runtimeOptions.driver()->tileSize().isSet())
+    if (!getImageLayerOptions().driver()->tileSize().isSet())
     {
-        _runtimeOptions.driver()->tileSize().init( 256 );
+        mutableImageLayerOptions().driver()->tileSize().init( 256 );
     }
 
     _emptyImage = ImageUtils::createEmptyImage();
-    //*((unsigned*)_emptyImage->data()) = 0x7F0000FF;
 
-    if ( _runtimeOptions.shareTexUniformName().isSet() )
-        _shareTexUniformName = _runtimeOptions.shareTexUniformName().get();
+    if ( getImageLayerOptions().shareTexUniformName().isSet() )
+        _shareTexUniformName = getImageLayerOptions().shareTexUniformName().get();
     else
         _shareTexUniformName.init( Stringify() << "layer_" << getUID() << "_tex" );
 
-    if ( _runtimeOptions.shareTexMatUniformName().isSet() )
-        _shareTexMatUniformName = _runtimeOptions.shareTexMatUniformName().get();
+    if ( getImageLayerOptions().shareTexMatUniformName().isSet() )
+        _shareTexMatUniformName = getImageLayerOptions().shareTexMatUniformName().get();
     else
         _shareTexMatUniformName.init( Stringify()  << "layer_" << getUID() << "_texMatrix" );
+}
+
+Config
+ImageLayer::getConfig() const
+{    
+    Config conf = getImageLayerOptions().getConfig();
+    conf.key() = "image";
+    conf.set("driver", getImageLayerOptions().driver()->getDriver()); // need?
+    return conf;
+    //Config layerConf = getImageLayerOptions().getConfig();
+    //layerConf.set("name", getName());
+    //layerConf.set("driver", getInitialOptions().driver()->getDriver());
+    //layerConf.key() = "image";
+    //return layerConf;
 }
 
 void
@@ -357,35 +429,65 @@ ImageLayer::fireCallback( ImageLayerCallbackMethodPtr method )
 void
 ImageLayer::setOpacity( float value ) 
 {
-    _runtimeOptions.opacity() = osg::clampBetween( value, 0.0f, 1.0f );
+    mutableImageLayerOptions().opacity() = osg::clampBetween( value, 0.0f, 1.0f );
     fireCallback( &ImageLayerCallback::onOpacityChanged );
+}
+
+float
+ImageLayer::getOpacity() const
+{
+    return getImageLayerOptions().opacity().get();
 }
 
 void
 ImageLayer::setMinVisibleRange( float minVisibleRange )
 {
-    _runtimeOptions.minVisibleRange() = minVisibleRange;
+    mutableImageLayerOptions().minVisibleRange() = minVisibleRange;
     fireCallback( &ImageLayerCallback::onVisibleRangeChanged );
+}
+
+float
+ImageLayer::getMinVisibleRange() const
+{
+    return getImageLayerOptions().minVisibleRange().get();
 }
 
 void
 ImageLayer::setMaxVisibleRange( float maxVisibleRange )
 {
-    _runtimeOptions.maxVisibleRange() = maxVisibleRange;
+    mutableImageLayerOptions().maxVisibleRange() = maxVisibleRange;
     fireCallback( &ImageLayerCallback::onVisibleRangeChanged );
+}
+
+float
+ImageLayer::getMaxVisibleRange() const
+{
+    return getImageLayerOptions().maxVisibleRange().get();
+}
+
+bool
+ImageLayer::isShared() const
+{
+    return getImageLayerOptions().shared().get();
+}
+
+bool
+ImageLayer::isCoverage() const
+{
+    return getImageLayerOptions().coverage().get();
 }
 
 void
 ImageLayer::addColorFilter( ColorFilter* filter )
 {
-    _runtimeOptions.colorFilters().push_back( filter );
+    mutableImageLayerOptions().colorFilters().push_back( filter );
     fireCallback( &ImageLayerCallback::onColorFiltersChanged );
 }
 
 void
 ImageLayer::removeColorFilter( ColorFilter* filter )
 {
-    ColorFilterChain& filters = _runtimeOptions.colorFilters();
+    ColorFilterChain& filters = mutableImageLayerOptions().colorFilters();
     ColorFilterChain::iterator i = std::find(filters.begin(), filters.end(), filter);
     if ( i != filters.end() )
     {
@@ -397,7 +499,7 @@ ImageLayer::removeColorFilter( ColorFilter* filter )
 const ColorFilterChain&
 ImageLayer::getColorFilters() const
 {
-    return _runtimeOptions.colorFilters();
+    return getImageLayerOptions().colorFilters();
 }
 
 void
@@ -423,7 +525,7 @@ ImageLayer::getOrCreatePreCacheOp()
                 _targetProfileHint->isEquivalentTo( getProfile() );
 
             ImageLayerPreCacheOperation* op = new ImageLayerPreCacheOperation();
-            op->_processor.init( _runtimeOptions, _dbOptions.get(), layerInTargetProfile );
+            op->_processor.init( getImageLayerOptions(), _readOptions.get(), layerInTargetProfile );
 
             _preCacheOp = op;
         }
@@ -432,20 +534,29 @@ ImageLayer::getOrCreatePreCacheOp()
 }
 
 
-CacheBin*
-ImageLayer::getCacheBin( const Profile* profile)
-{
-    // specialize ImageLayer to only consider the horizontal signature (ignore vertical
-    // datum component for images)
-    std::string binId = *_runtimeOptions.cacheId() + "_" + profile->getHorizSignature();
-    return TerrainLayer::getCacheBin( profile, binId );
-}
+//CacheBin*
+//ImageLayer::getCacheBin( const Profile* profile)
+//{
+//    // specialize ImageLayer to only consider the horizontal signature (ignore vertical
+//    // datum component for images)
+//    std::string binId = *_runtimeOptions.cacheId() + "_" + profile->getHorizSignature();
+//    return TerrainLayer::getCacheBin( profile, binId );
+//}
 
 
 GeoImage
 ImageLayer::createImage(const TileKey&    key,
                         ProgressCallback* progress)
 {
+    ScopedMetric m("ImageLayer::createImage", 2,
+                    "key", key.str().c_str(),
+                    "name", getName().c_str());
+
+    if (getStatus().isError())
+    {
+        return GeoImage::INVALID;
+    }
+
     return createImageInKeyProfile( key, progress );
 }
 
@@ -454,7 +565,10 @@ GeoImage
 ImageLayer::createImageInNativeProfile(const TileKey&    key,
                                        ProgressCallback* progress)
 {
-    GeoImage result;
+    if (getStatus().isError())
+    {
+        return GeoImage::INVALID;
+    }
 
     const Profile* nativeProfile = getProfile();
     if ( !nativeProfile )
@@ -462,6 +576,9 @@ ImageLayer::createImageInNativeProfile(const TileKey&    key,
         OE_WARN << LC << "Could not establish the profile" << std::endl;
         return GeoImage::INVALID;
     }
+    
+
+    GeoImage result;
 
     if ( key.getProfile()->isHorizEquivalentTo(nativeProfile) )
     {
@@ -517,7 +634,10 @@ GeoImage
 ImageLayer::createImageInKeyProfile(const TileKey&    key, 
                                     ProgressCallback* progress)
 {
-    GeoImage result;
+    if (getStatus().isError())
+    {
+        return GeoImage::INVALID;
+    }
 
     // If the layer is disabled, bail out.
     if ( !getEnabled() )
@@ -531,51 +651,59 @@ ImageLayer::createImageInKeyProfile(const TileKey&    key,
         return GeoImage::INVALID;
     }
 
+
+    GeoImage result;
+
     OE_DEBUG << LC << "create image for \"" << key.str() << "\", ext= "
         << key.getExtent().toString() << std::endl;
+
+    // the cache key combines the Key and the horizontal profile.
+    std::string cacheKey = Stringify() << key.str() << "_" << key.getProfile()->getHorizSignature();
+    const CachePolicy& policy = getCacheSettings()->cachePolicy().get();
     
     // Check the layer L2 cache first
     if ( _memCache.valid() )
     {
-        CacheBin* bin = _memCache->getOrCreateBin( key.getProfile()->getFullSignature() );        
-        ReadResult result = bin->readObject(key.str(), 0L);
+        CacheBin* bin = _memCache->getOrCreateDefaultBin();
+        ReadResult result = bin->readObject(cacheKey, 0L);
         if ( result.succeeded() )
             return GeoImage(static_cast<osg::Image*>(result.releaseObject()), key.getExtent());
-        //_memCache->dumpStats(key.getProfile()->getFullSignature());
     }
 
     // locate the cache bin for the target profile for this layer:
     CacheBin* cacheBin = getCacheBin( key.getProfile() );
 
     // validate that we have either a valid tile source, or we're cache-only.
-    if ( ! (getTileSource() || (isCacheOnly() && cacheBin) ) )
+    if (getTileSource() || (cacheBin && policy.isCacheOnly()))
     {
-        OE_WARN << LC << "Error: layer does not have a valid TileSource, cannot create image " << std::endl;
-        _runtimeOptions.enabled() = false;
+        //nop = OK.
+    }
+    else
+    {
+        disable("Error: layer does not have a valid TileSource, cannot create image");
         return GeoImage::INVALID;
     }
 
     // validate the existance of a valid layer profile (unless we're in cache-only mode, in which
     // case there is no layer profile)
-    if ( !isCacheOnly() && !getProfile() )
+    if ( !policy.isCacheOnly() && !getProfile() )
     {
-        OE_WARN << LC << "Could not establish a valid profile" << std::endl;
-        _runtimeOptions.enabled() = false;
+        disable("Could not establish a valid profile");
         return GeoImage::INVALID;
     }
 
-    osg::ref_ptr< osg::Image > cachedImage;        
+    osg::ref_ptr< osg::Image > cachedImage;
 
     // First, attempt to read from the cache. Since the cached data is stored in the
     // map profile, we can try this first.
-    if ( cacheBin && getCachePolicy().isCacheReadable() )
+    if ( cacheBin && policy.isCacheReadable() )
     {
-        ReadResult r = cacheBin->readImage(key.str(), 0L);
+        ReadResult r = cacheBin->readImage(cacheKey, 0L);
         if ( r.succeeded() )
         {
             cachedImage = r.releaseImage();
             ImageUtils::fixInternalFormat( cachedImage.get() );            
-            bool expired = getCachePolicy().isExpired(r.lastModifiedTime());
+            bool expired = policy.isExpired(r.lastModifiedTime());
             if (!expired)
             {
                 OE_DEBUG << "Got cached image for " << key.str() << std::endl;                
@@ -589,7 +717,7 @@ ImageLayer::createImageInKeyProfile(const TileKey&    key,
     }
     
     // The data was not in the cache. If we are cache-only, fail sliently
-    if ( isCacheOnly() )
+    if ( policy.isCacheOnly() )
     {
         // If it's cache only and we have an expired but cached image, just return it.
         if (cachedImage.valid())
@@ -614,22 +742,22 @@ ImageLayer::createImageInKeyProfile(const TileKey&    key,
     // memory cache first:
     if ( result.valid() && _memCache.valid() )
     {
-        CacheBin* bin = _memCache->getOrCreateBin( key.getProfile()->getFullSignature() ); 
-        bin->write(key.str(), result.getImage(), 0L);
+        CacheBin* bin = _memCache->getOrCreateDefaultBin();
+        bin->write(cacheKey, result.getImage(), 0L);
     }
 
     // If we got a result, the cache is valid and we are caching in the map profile,
     // write to the map cache.
     if (result.valid()  &&
         cacheBin        && 
-        getCachePolicy().isCacheWriteable() )
+        policy.isCacheWriteable())
     {
         if ( key.getExtent() != result.getExtent() )
         {
             OE_INFO << LC << "WARNING! mismatched extents." << std::endl;
         }
 
-        cacheBin->write(key.str(), result.getImage(), 0L);
+        cacheBin->write(cacheKey, result.getImage(), 0L);
     }
 
     if ( result.valid() )
@@ -686,7 +814,8 @@ ImageLayer::createImageFromTileSource(const TileKey&    key,
     osg::ref_ptr<osg::Image> result = source->createImage( key, op.get(), progress );   
 
     // Process images with full alpha to properly support MP blending.    
-    if ( result.valid() && *_runtimeOptions.featherPixels())
+    if (result.valid() && 
+        getImageLayerOptions().featherPixels() == true)
     {
         ImageUtils::featherAlphaRegions( result.get() );
     }    
@@ -715,9 +844,9 @@ ImageLayer::assembleImageFromTileSource(const TileKey&    key,
 
     // Scale the extent if necessary to apply an "edge buffer"
     GeoExtent ext = key.getExtent();
-    if ( _runtimeOptions.edgeBufferRatio().isSet() )
+    if ( getImageLayerOptions().edgeBufferRatio().isSet() )
     {
-        double ratio = _runtimeOptions.edgeBufferRatio().get();
+        double ratio = getImageLayerOptions().edgeBufferRatio().get();
         ext.scale(ratio, ratio);
     }
 
@@ -864,13 +993,15 @@ ImageLayer::assembleImageFromTileSource(const TileKey&    key,
         result = mosaicedImage.reproject( 
             key.getProfile()->getSRS(),
             &key.getExtent(), 
-            *_runtimeOptions.reprojectedTileSize(),
-            *_runtimeOptions.reprojectedTileSize(),
-            *_runtimeOptions.driver()->bilinearReprojection() );
+            getImageLayerOptions().reprojectedTileSize().get(),
+            getImageLayerOptions().reprojectedTileSize().get(),
+            getImageLayerOptions().driver()->bilinearReprojection().get());
     }
 
     // Process images with full alpha to properly support MP blending.
-    if ( result.valid() && *_runtimeOptions.featherPixels() && !isCoverage() )
+    if (result.valid() && 
+        getImageLayerOptions().featherPixels() == true &&
+        isCoverage() == false)
     {
         ImageUtils::featherAlphaRegions( result.getImage() );
     }
@@ -892,7 +1023,7 @@ ImageLayer::applyTextureCompressionMode(osg::Texture* tex) const
     }
 
 
-    else if ( _runtimeOptions.textureCompression() == (osg::Texture::InternalFormatMode)~0 )
+    else if ( getImageLayerOptions().textureCompression() == (osg::Texture::InternalFormatMode)~0 )
     {
         // auto mode:
         if ( Registry::capabilities().isGLES() )
@@ -913,7 +1044,7 @@ ImageLayer::applyTextureCompressionMode(osg::Texture* tex) const
             }
         }
     }
-    else if ( _runtimeOptions.textureCompression() == (osg::Texture::InternalFormatMode)(~0 - 1))
+    else if ( getImageLayerOptions().textureCompression() == (osg::Texture::InternalFormatMode)(~0 - 1))
     {
         osg::Timer_t start = osg::Timer::instance()->tick();
         osgDB::ImageProcessor* imageProcessor = osgDB::Registry::instance()->getImageProcessorForExtension("fastdxt");
@@ -949,9 +1080,9 @@ ImageLayer::applyTextureCompressionMode(osg::Texture* tex) const
         }
 
     }
-    else if ( _runtimeOptions.textureCompression().isSet() )
+    else if ( getImageLayerOptions().textureCompression().isSet() )
     {
         // use specifically picked a mode.
-        tex->setInternalFormatMode( *_runtimeOptions.textureCompression() );
+        tex->setInternalFormatMode(getImageLayerOptions().textureCompression().get());
     }
 }

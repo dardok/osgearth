@@ -1,6 +1,6 @@
 /* -*-c++-*- */
 /* osgEarth - Dynamic map generation toolkit for OpenSceneGraph
- * Copyright 2015 Pelican Mapping
+ * Copyright 2016 Pelican Mapping
  * http://osgearth.org
  *
  * osgEarth is free software; you can redistribute it and/or modify
@@ -30,6 +30,10 @@ using namespace osgEarth::Util::Controls;
 using namespace osgEarth::MapInspector;
 
 #define LC "[MapInspector] "
+
+
+REGISTER_OSGEARTH_EXTENSION(osgearth_mapinspector, MapInspectorExtension)
+
 
 MapInspectorExtension::MapInspectorExtension()
 {

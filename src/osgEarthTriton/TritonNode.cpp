@@ -1,6 +1,6 @@
 /* -*-c++-*- */
 /* osgEarth - Dynamic map generation toolkit for OpenSceneGraph
- * Copyright 2015 Pelican Mapping
+ * Copyright 2016 Pelican Mapping
  * http://osgearth.org
  *
  * osgEarth is free software; you can redistribute it and/or modify
@@ -37,6 +37,11 @@ _options ( options )
     if ( map )
         setSRS( map->getSRS() );
 
+    // Remember the resource releaser so we can properly destroy 
+    // Triton objects in a graphics context.
+    _releaser = mapNode->getResourceReleaser();
+
+    // create an object to house Triton data and resources.
     _TRITON = new TritonContext( options );
 
     if ( map )
@@ -45,22 +50,34 @@ _options ( options )
     if ( callback )
         _TRITON->setCallback( callback );
 
-    _drawable = new TritonDrawable(mapNode, _TRITON);
+    TritonDrawable* drawable = new TritonDrawable(mapNode, _TRITON);
+    _drawable = drawable;
     _alphaUniform = getOrCreateStateSet()->getOrCreateUniform("oe_ocean_alpha", osg::Uniform::FLOAT);
     _alphaUniform->set(getAlpha());
+    _drawable->setNodeMask( TRITON_OCEAN_MASK );
+    this->addChild(_drawable);
 
-    osg::Geode* geode = new osg::Geode();
-    geode->addDrawable( _drawable );
-    geode->setNodeMask( TRITON_OCEAN_MASK );
-
-    this->addChild( geode );
+    drawable->_heightCameraParent = this;
 
     this->setNumChildrenRequiringUpdateTraversal(1);
+
+    // Place in the depth-sorted bin and set a rendering order.
+    // We want Triton to render after the terrain.
+    _drawable->getOrCreateStateSet()->setRenderBinDetails( options.renderBinNumber().get(), "DepthSortedBin" );
 }
 
 TritonNode::~TritonNode()
 {
-    //nop
+    // submit the TRITON context to the releaser so it can shut down Triton
+    // objects in a valid graphics context.
+    if (_TRITON.valid())
+    {
+        osg::ref_ptr<ResourceReleaser> releaser;
+        if (_releaser.lock(releaser))
+        {
+            releaser->push(_TRITON.get());
+        }
+    }
 }
 
 void

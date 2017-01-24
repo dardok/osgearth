@@ -1,6 +1,6 @@
 /* -*-c++-*- */
 /* osgEarth - Dynamic map generation toolkit for OpenSceneGraph
- * Copyright 2015 Pelican Mapping
+ * Copyright 2016 Pelican Mapping
  * http://osgearth.org
  *
  * osgEarth is free software; you can redistribute it and/or modify
@@ -50,7 +50,7 @@ _dbOptions     ( dbOptions )
 
     // if the caller did not provide a dbOptions, take it from the map.
     if ( map && !dbOptions )
-        _dbOptions = map->getDBOptions();
+        _dbOptions = map->getReadOptions();
 
     // A new cache to optimize state changes. Since the cache lives in the Session, any
     // geometry created under this session takes advantage of it. That's reasonable since
@@ -84,9 +84,9 @@ Session::getResourceCache()
 }
 
 MapFrame
-Session::createMapFrame( Map::ModelParts parts ) const
+Session::createMapFrame() const
 {
-    return MapFrame( _map.get(), parts );
+    return MapFrame( _map.get() );
 }
 
 void

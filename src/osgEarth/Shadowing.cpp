@@ -1,6 +1,6 @@
 /* -*-c++-*- */
 /* osgEarth - Dynamic map generation toolkit for OpenSceneGraph
-* Copyright 2015 Pelican Mapping
+* Copyright 2016 Pelican Mapping
 * http://osgearth.org
 *
 * osgEarth is free software; you can redistribute it and/or modify
@@ -30,13 +30,12 @@ using namespace osgEarth;
 void
 Shadowing::setIsShadowCamera(osg::Camera* camera)
 {
-    camera->setUserValue("oe_isShadowCamera", true);
+    camera->getOrCreateStateSet()->setDefine("OE_IS_SHADOW_CAMERA");
 }
 
 bool
 Shadowing::isShadowCamera(const osg::Camera* camera)
 {
-    bool is = false;
-    camera->getUserValue("oe_isShadowCamera", is);
-    return is;
+    const osg::StateSet* ss = camera->getStateSet();
+    return ss && ss->getDefinePair("OE_IS_SHADOW_CAMERA") != 0L;
 }

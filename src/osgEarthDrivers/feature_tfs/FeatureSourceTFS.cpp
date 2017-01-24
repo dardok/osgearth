@@ -1,6 +1,6 @@
 /* -*-c++-*- */
 /* osgEarth - Dynamic map generation toolkit for OpenSceneGraph
- * Copyright 2015 Pelican Mapping
+ * Copyright 2016 Pelican Mapping
  * http://osgearth.org
  *
  * osgEarth is free software; you can redistribute it and/or modify
@@ -71,89 +71,55 @@ public:
     }
 
     //override
-    void initialize( const osgDB::Options* dbOptions )
-    {
-        FeatureSource::initialize( dbOptions );
+    Status initialize(const osgDB::Options* readOptions)
+    { 
+        // make a local copy of the read options.
+        _readOptions = Registry::cloneOrCreateOptions(readOptions);
 
-        _dbOptions = dbOptions ? osg::clone(dbOptions) : 0L;
-        if ( _dbOptions.valid() )
-        {
-            // Set up a Custom caching bin for this source:
-            Cache* cache = Cache::get( _dbOptions.get() );
-            if ( cache )
-            {
-                Config optionsConf = _options.getConfig();
+        FeatureProfile* fp = 0L;
 
-                std::string binId = Stringify() << std::hex << hashString(optionsConf.toJSON()) << "_tfs";
-                _cacheBin = cache->addBin( binId );
-                if ( _cacheBin.valid() )
-                {                
-                    // write a metadata record just for reference purposes.. we don't actually use it
-                    Config metadata = _cacheBin->readMetadata();
-                    if ( metadata.empty() )
-                    {
-                        _cacheBin->writeMetadata( optionsConf );
-                    }
+        // Try to read the TFS metadata:
+        _layerValid = TFSReaderWriter::read(_options.url().get(), _readOptions.get(), _layer);
 
-                    if ( _cacheBin.valid() )
-                    {
-                        _cacheBin->put( _dbOptions.get() );
-                    }
-                }
-                else
-                {
-                    OE_INFO << LC << "Failed to open cache bin \"" << binId << "\"\n";
-                }
-            }
-        }     
-        _layerValid = TFSReaderWriter::read(_options.url().get(), _dbOptions.get(), _layer);
         if (_layerValid)
         {
             OE_INFO << LC <<  "Read layer TFS " << _layer.getTitle() << " " << _layer.getAbstract() << " " << _layer.getFirstLevel() << " " << _layer.getMaxLevel() << " " << _layer.getExtent().toString() << std::endl;
-        }
-    }
 
-
-    /** Called once at startup to create the profile for this feature set. Successful profile
-        creation implies that the datasource opened succesfully. */
-    const FeatureProfile* createFeatureProfile()
-    {
-        FeatureProfile* result = NULL;
-        if (_layerValid)
-        {
-            result = new FeatureProfile(_layer.getExtent());
-            result->setTiled( true );
-            result->setFirstLevel( _layer.getFirstLevel());
-            result->setMaxLevel( _layer.getMaxLevel());
-            result->setProfile( osgEarth::Profile::create(_layer.getSRS(), _layer.getExtent().xMin(), _layer.getExtent().yMin(), _layer.getExtent().xMax(), _layer.getExtent().yMax(), 1, 1) );
+            fp = new FeatureProfile(_layer.getExtent());
+            fp->setTiled( true );
+            fp->setFirstLevel( _layer.getFirstLevel());
+            fp->setMaxLevel( _layer.getMaxLevel());
+            fp->setProfile( osgEarth::Profile::create(_layer.getSRS(), _layer.getExtent().xMin(), _layer.getExtent().yMin(), _layer.getExtent().xMax(), _layer.getExtent().yMax(), 1, 1) );
             if ( _options.geoInterp().isSet() )
-                result->geoInterp() = _options.geoInterp().get();
+                fp->geoInterp() = _options.geoInterp().get();
         }
         else
         {
             // Try to get the results from the settings instead
             if ( !_options.profile().isSet())
             {
-                OE_NOTICE << LC << "TFS driver needs an explicit profile set" << std::endl;
-                return 0;
+                return Status::Error(Status::ConfigurationError, "TFS driver requires an explicit profile");
             }
 
             if (!_options.minLevel().isSet() || !_options.maxLevel().isSet())
             {
-                OE_NOTICE << LC << "TFS driver needs a min and max level set" << std::endl;
-                return 0;
+                return Status::Error(Status::ConfigurationError, "TFS driver requires a min and max level");
             }
            
-            osg::ref_ptr<const Profile> profile = Profile::create( *_options.profile() );            
-            result = new FeatureProfile(profile->getExtent());
-            result->setTiled( true );
-            result->setFirstLevel( *_options.minLevel() );
-            result->setMaxLevel( *_options.maxLevel() );
-            result->setProfile( profile );
+            osg::ref_ptr<const Profile> profile = Profile::create( *_options.profile() );    
+
+            fp = new FeatureProfile(profile->getExtent());
+            fp->setTiled( true );
+            fp->setFirstLevel( *_options.minLevel() );
+            fp->setMaxLevel( *_options.maxLevel() );
+            fp->setProfile( profile );
             if ( _options.geoInterp().isSet() )
-                result->geoInterp() = _options.geoInterp().get();
+                fp->geoInterp() = _options.geoInterp().get();
         }
-        return result;        
+
+        setFeatureProfile(fp);
+
+        return Status::OK();
     }
 
 
@@ -294,7 +260,7 @@ public:
         return "";                       
     }
 
-    FeatureCursor* createFeatureCursor( const Symbology::Query& query )
+    FeatureCursor* createFeatureCursor(const Symbology::Query& query)
     {
         FeatureCursor* result = 0L;
 
@@ -309,7 +275,7 @@ public:
         URI uri(url);
 
         // read the data:
-        ReadResult r = uri.readString( _dbOptions.get() );
+        ReadResult r = uri.readString( _readOptions.get() );
 
         const std::string& buffer = r.getString();
         const Config&      meta   = r.metadata();
@@ -344,12 +310,24 @@ public:
             {
                 FilterContext cx;
                 cx.setProfile( getFeatureProfile() );
+                cx.extent() = query.tileKey()->getExtent();
 
                 for( FeatureFilterList::const_iterator i = getFilters().begin(); i != getFilters().end(); ++i )
                 {
                     FeatureFilter* filter = i->get();
                     cx = filter->push( features, cx );
                 }
+            }
+        }
+
+        // If we have any features and we have an fid attribute, override the fid of the features
+        if (_options.fidAttribute().isSet())
+        {
+            for (FeatureList::iterator itr = features.begin(); itr != features.end(); ++itr)
+            {
+                std::string attr = itr->get()->getString(_options.fidAttribute().get());                
+                FeatureID fid = as<long>(attr, 0);
+                itr->get()->setFID( fid );
             }
         }
 
@@ -393,9 +371,8 @@ public:
 
 private:
     const TFSFeatureOptions         _options;    
-    FeatureSchema                   _schema;
-    osg::ref_ptr<CacheBin>          _cacheBin;
-    osg::ref_ptr<osgDB::Options>    _dbOptions;    
+    FeatureSchema                   _schema;    
+    osg::ref_ptr<osgDB::Options>    _readOptions;    
     TFSLayer                        _layer;
     bool                            _layerValid;
 };
@@ -409,7 +386,7 @@ public:
         supportsExtension( "osgearth_feature_tfs", "TFS feature driver for osgEarth" );
     }
 
-    virtual const char* className()
+    virtual const char* className() const
     {
         return "TFS Feature Reader";
     }

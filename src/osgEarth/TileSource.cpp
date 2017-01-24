@@ -1,6 +1,6 @@
 /* -*-c++-*- */
 /* osgEarth - Dynamic map generation toolkit for OpenSceneGraph
- * Copyright 2015 Pelican Mapping
+ * Copyright 2016 Pelican Mapping
  * http://osgearth.org
  *
  * osgEarth is free software; you can redistribute it and/or modify
@@ -40,7 +40,8 @@ using namespace osgEarth;
 
 //------------------------------------------------------------------------
 
-TileBlacklist::TileBlacklist()
+TileBlacklist::TileBlacklist() :
+_tiles(true, 1024)
 {
     //NOP
 }
@@ -48,15 +49,13 @@ TileBlacklist::TileBlacklist()
 void
 TileBlacklist::add(const TileKey& key)
 {
-    Threading::ScopedWriteLock lock(_mutex);
-    _tiles.insert(key);
+    _tiles.insert(key, true);
     OE_DEBUG << "Added " << key.str() << " to blacklist" << std::endl;
 }
 
 void
 TileBlacklist::remove(const TileKey& key)
 {
-    Threading::ScopedWriteLock lock(_mutex);
     _tiles.erase(key);
     OE_DEBUG << "Removed " << key.str() << " from blacklist" << std::endl;
 }
@@ -64,7 +63,6 @@ TileBlacklist::remove(const TileKey& key)
 void
 TileBlacklist::clear()
 {
-    Threading::ScopedWriteLock lock(_mutex);
     _tiles.clear();
     OE_DEBUG << "Cleared blacklist" << std::endl;
 }
@@ -72,15 +70,7 @@ TileBlacklist::clear()
 bool
 TileBlacklist::contains(const TileKey& key) const
 {
-    Threading::ScopedReadLock lock(_mutex);
-    return _tiles.find(key) != _tiles.end();
-}
-
-unsigned int
-TileBlacklist::size() const
-{
-    Threading::ScopedReadLock lock(_mutex);
-    return _tiles.size();
+    return _tiles.has(key);
 }
 
 TileBlacklist*
@@ -130,14 +120,21 @@ TileBlacklist::write(const std::string &filename) const
     write(out);
 }
 
+namespace {
+    struct WriteFunctor : public LRUCache<TileKey,bool>::Functor {
+        std::ostream& _out;
+        WriteFunctor(std::ostream& out) : _out(out) { }
+        void operator()(const TileKey& key, const bool& value) {
+            _out << key.getLOD() << ' ' << key.getTileX() << ' ' << key.getTileY() << std::endl;
+        }
+    };
+}
+
 void
 TileBlacklist::write(std::ostream &output) const
 {
-    Threading::ScopedReadLock lock(const_cast<TileBlacklist*>(this)->_mutex);
-    for (BlacklistedTiles::const_iterator itr = _tiles.begin(); itr != _tiles.end(); ++itr)
-    {
-        output << itr->getLOD() << " " << itr->getTileX() << " " << itr->getTileY() << std::endl;
-    }
+    WriteFunctor writer(output);
+    _tiles.iterate(writer);
 }
 
 
@@ -207,7 +204,6 @@ TileSourceOptions::fromConfig( const Config& conf )
 //------------------------------------------------------------------------
 
 // statics
-TileSource::Status TileSource::STATUS_OK = TileSource::Status();
 
 const char* TileSource::INTERFACE_NAME = "osgEarth::TileSource";
 
@@ -219,10 +215,9 @@ const TileSource::Mode TileSource::MODE_CREATE = 0x04;
 TileSource::TileSource(const TileSourceOptions& options) :
 _options( options ),
 _status ( Status::Error("Not initialized") ),
-_mode   ( 0 )
+_mode   ( 0 ),
+_openCalled( false )
 {
-    this->setThreadSafeRefUnref( true );
-
     // Initialize the l2 cache size to the options.
     int l2CacheSize = *options.L2CacheSize();
 
@@ -276,49 +271,36 @@ TileSource::~TileSource()
     }
 }
 
-void
-TileSource::setStatus( TileSource::Status status )
-{
-    _status = status;
-}
-
-TileSource::Status
-TileSource::initialize(const osgDB::Options* options)
-{
-    // default implementation. Subclasses should override this.
-    return STATUS_OK;
-}
-
-const TileSource::Status&
+const Status&
 TileSource::open(const Mode&           openMode,
                  const osgDB::Options* options)
 {
-    _mode = openMode;
-
-    // Initialize the underlying data store
-    Status status = initialize(options);
-
-    // Check the return status. The TileSource MUST have a valid
-    // Profile after initialization.
-    if ( status == STATUS_OK )
+    if (!_openCalled)
     {
-        if ( getProfile() != 0L )
+        _mode = openMode;
+
+        // Initialize the underlying data store
+        Status status = initialize(options);
+
+        // Check the return status. The TileSource MUST have a valid
+        // Profile after initialization.
+        if ( status == STATUS_OK )
+        {
+            if ( getProfile() != 0L )
+            {
+                _status = status;
+            }
+            else 
+            {
+                _status = Status::Error("No profile available");
+            }
+        }
+        else
         {
             _status = status;
         }
-        else 
-        {
-            _status = Status::Error("No profile available");
-        }
-    }
-    else
-    {
-        _status = status;
-    }
 
-    if ( _status.isError() )
-    {
-        OE_WARN << LC << "Open failed: " << _status.message() << std::endl;
+        _openCalled = true;
     }
 
     return _status;
@@ -361,7 +343,7 @@ TileSource::createImage(const TileKey&        key,
                         ImageOperation*       prepOp, 
                         ProgressCallback*     progress )
 {
-    if ( _status != STATUS_OK )
+    if (getStatus().isError())
         return 0L;
 
     // Try to get it from the memcache fist
@@ -391,7 +373,7 @@ TileSource::createHeightField(const TileKey&        key,
                               HeightFieldOperation* prepOp, 
                               ProgressCallback*     progress )
 {
-    if ( _status != STATUS_OK )
+    if (getStatus().isError())
         return 0L;
 
     // Try to get it from the memcache first:
@@ -399,7 +381,9 @@ TileSource::createHeightField(const TileKey&        key,
     {
         ReadResult r = _memCache->getOrCreateDefaultBin()->readObject(key.str(), 0L);
         if ( r.succeeded() )
+        {
             return r.release<osg::HeightField>();
+        }
     }
 
     osg::ref_ptr<osg::HeightField> newHF = createHeightField( key, progress );
@@ -427,7 +411,7 @@ osg::HeightField*
 TileSource::createHeightField(const TileKey&        key,
                               ProgressCallback*     progress)
 {
-    if ( _status != STATUS_OK )
+    if (getStatus().isError())
         return 0L;
 
     osg::ref_ptr<osg::Image> image = createImage(key, progress);
@@ -445,7 +429,7 @@ TileSource::storeHeightField(const TileKey&     key,
                              osg::HeightField*  hf,
                               ProgressCallback* progress)
 {
-    if ( _status != STATUS_OK || hf == 0L )
+    if (getStatus().isError() || hf == 0L )
         return 0L;
 
     ImageToHeightFieldConverter conv;
@@ -460,7 +444,7 @@ TileSource::storeHeightField(const TileKey&     key,
 bool
 TileSource::isOK() const 
 {
-    return _status == STATUS_OK;
+    return _status.isOK();
 }
 
 void
@@ -638,7 +622,7 @@ TileSource::getBestAvailableTileKey(const osgEarth::TileKey& key,
         if (key.getExtent().intersects( *itr ))
         {
             // check that the extent isn't higher-resolution than our key:
-            if ( !itr->minLevel().isSet() || layerLOD >= itr->minLevel().get() )
+            if ( !itr->minLevel().isSet() || layerLOD >= (int)itr->minLevel().get() )
             {
                 // Got an intersetion; now test the LODs:
                 intersects = true;
@@ -653,7 +637,7 @@ TileSource::getBestAvailableTileKey(const osgEarth::TileKey& key,
 
                 // Is our key at a lower or equal LOD than the max key in this extent?
                 // If so, our key is good.
-                else if ( layerLOD <= itr->maxLevel().get() )
+                else if ( layerLOD <= (int)itr->maxLevel().get() )
                 {
                     output = key;
                     return true;
@@ -747,68 +731,36 @@ TileSourceFactory::create(const TileSourceOptions& options)
     result = dynamic_cast<TileSource*>( osgDB::readObjectFile( driverExt, dbopt.get() ) );
     if ( !result )
     {
-        OE_WARN << LC << "Failed to load TileSource driver \"" << driver << "\"" << std::endl;
+        OE_INFO << LC << "Failed to load TileSource driver \"" << driver << "\"" << std::endl;
     }
 
-    OE_DEBUG << LC << "Tile source Profile = " << (result->getProfile() ? result->getProfile()->toString() : "NULL") << std::endl;
-
-    // apply an Override Profile if provided.
-    if ( result && options.profile().isSet() )
+    else
     {
-        const Profile* profile = Profile::create(*options.profile());
-        if ( profile )
+        OE_DEBUG << LC << "Tile source Profile = " << (result->getProfile() ? result->getProfile()->toString() : "NULL") << std::endl;
+
+        // apply an Override Profile if provided.
+        if ( options.profile().isSet() )
         {
-            result->setProfile( profile );
+            const Profile* profile = Profile::create(*options.profile());
+            if ( profile )
+            {
+                result->setProfile( profile );
+            }
         }
     }
 
     return result;
 }
 
-#if 0
-ReadWriteTileSource*
-TileSourceFactory::openReadWrite(const TileSourceOptions& options)
-{
-    ReadWriteTileSource* result = 0L;
-
-    std::string driver = options.getDriver();
-    if ( driver.empty() )
-    {
-        OE_WARN << LC << "ILLEGAL- no driver set for tile source" << std::endl;
-        return 0L;
-    }
-
-    osg::ref_ptr<osgDB::Options> dbopt = Registry::instance()->cloneOrCreateOptions();
-    dbopt->setPluginData      ( TILESOURCEOPTIONS_TAG,   (void*)&options );
-    dbopt->setPluginStringData( TILESOURCEINTERFACE_TAG, ReadWriteTileSource::INTERFACE_NAME );
-
-    std::string driverExt = std::string( ".osgearth_" ) + driver;
-    result = dynamic_cast<ReadWriteTileSource*>( osgDB::readObjectFile( driverExt, dbopt.get() ) );
-    if ( !result )
-    {
-        OE_WARN << LC << "Failed to load ReadWriteTileSource driver \"" << driver << "\"" << std::endl;
-    }
-
-    // apply an Override Profile if provided.
-    if ( result && options.profile().isSet() )
-    {
-        const Profile* profile = Profile::create(*options.profile());
-        if ( profile )
-        {
-            result->setProfile( profile );
-        }
-    }
-
-    return result;
-}
-#endif
 
 //------------------------------------------------------------------------
 
 const TileSourceOptions&
 TileSourceDriver::getTileSourceOptions(const osgDB::Options* dbopt ) const
 {
-    return *static_cast<const TileSourceOptions*>( dbopt->getPluginData( TILESOURCE_OPTIONS_TAG ) );
+    static TileSourceOptions s_default;
+    const void* data = dbopt->getPluginData(TILESOURCE_OPTIONS_TAG);
+    return data ? *static_cast<const TileSourceOptions*>(data) : s_default;
 }
 
 const std::string

@@ -1,6 +1,6 @@
 /* -*-c++-*- */
 /* osgEarth - Dynamic map generation toolkit for OpenSceneGraph
- * Copyright 2015 Pelican Mapping
+ * Copyright 2016 Pelican Mapping
  * http://osgearth.org
  *
  * osgEarth is free software; you can redistribute it and/or modify
@@ -20,6 +20,7 @@
 #include <osgEarth/ImageUtils>
 #include <osgEarth/ThreadingUtils>
 #include <osgEarth/Registry>
+#include <osgEarth/Cache>
 
 #include <osgDB/ReaderWriter>
 #include <osgDB/FileNameUtils>
@@ -30,6 +31,21 @@
 #include <osg/TextureBuffer>
 
 using namespace osgEarth;
+
+
+// serializer for osg::DummyObject (not present in OSG)
+// We need this because the osgDB::DatabasePager will sometimes
+// add a DummyObject to textures that it finds in paged objects.
+namespace osg
+{
+    REGISTER_OBJECT_WRAPPER(DummyObject,
+                            new osg::DummyObject,
+                            osg::DummyObject,
+                            "osg::DummyObject")
+    {
+        //nop
+    }
+}
 
 namespace
 {
@@ -82,6 +98,25 @@ namespace
             if (!drawable) return;
             apply(drawable->getStateSet());
             applyUserData(*drawable);
+            
+            osg::Geometry* geom = drawable->asGeometry();
+            if (geom)
+                apply(geom);
+        }
+
+        void apply(osg::Geometry* geom)
+        {
+            // This detects any NULL vertex attribute arrays and then populates them.
+            // Do this because a NULL VAA will crash the OSG serialization reader (osg 3.4.0)
+            osg::Geometry::ArrayList& arrays = geom->getVertexAttribArrayList();
+            for (osg::Geometry::ArrayList::iterator i = arrays.begin(); i != arrays.end(); ++i)
+            {
+                if (i->get() == 0L)
+                {
+                    *i = new osg::FloatArray();
+                    i->get()->setBinding( osg::Array::BIND_OFF );
+                }
+            }
         }
 
         void apply(osg::StateSet* ss)
@@ -111,6 +146,8 @@ namespace
                         {              
                             tex->setUnRefImageDataAfterApply(false);               
 
+#if 0 // took this out in favor of the osg::DummyObject serializer above.
+
                             // OSG's DatabasePager attaches "marker objects" to Textures' UserData when it runs a
                             // FindCompileableGLObjectsVisitor. This operation is not thread-safe; it doesn't
                             // account for the possibility that the texture may already be in use elsewhere.
@@ -124,7 +161,6 @@ namespace
                             // This "hack" prevents a crash in OSG 3.4.0 when trying to modify and then write
                             // serialize the scene graph containing these shared texture objects.
                             // Kudos to Jason B for figuring this one out.
-
                             osg::Texture* texClone = osg::clone(tex, osg::CopyOp::SHALLOW_COPY);
                             if ( texClone )
                             {
@@ -145,6 +181,7 @@ namespace
                             {
                                 OE_WARN << LC << "Texture clone failed.\n";
                             }
+#endif
                         }
                         else
                         {
@@ -171,10 +208,8 @@ namespace
 #undef  LC
 #define LC "[WriteImagesToCache] "
         
-#define IMAGE_PREFIX "i_"
-
     /**
-     * Traverses a graph, located externally referneced images, and writes
+     * Traverses a graph, located externally referenced images, and writes
      * them to the cache using a unique cache key. Then this will change the
      * image's FileName to point at the cached image instead of the original
      * source. The caches image key includes the .osgearth_cachebin extension,
@@ -219,18 +254,20 @@ namespace
                 OE_WARN << LC << "ERROR image with blank filename.\n";
             }
 
-            if (!osgEarth::startsWith(path, IMAGE_PREFIX))
+            if (!osgEarth::endsWith(path, ".osgearth_cachebin"))
             {
                 // take a plugin-global mutex to avoid two threads altering the image
                 // at the same time
                 Threading::ScopedMutexLock lock(_globalMutex);
 
-                if (!osgEarth::startsWith(path, IMAGE_PREFIX))
+                if (!osgEarth::endsWith(path, ".osgearth_cachebin"))
                 {
-                    std::string cacheKey = Stringify() << IMAGE_PREFIX << std::hex << osgEarth::hashString(path);
+                    // get the hashed key that the cache bin will use to actually write the image,
+                    // and replace the image filename with it.
+                    std::string cacheKey = path;
+                    std::string hashKey = _bin->getHashedKey(cacheKey);
 
-                    // TODO: adding the .osgb here works with the file system cache only.
-                    // We need to use a pseudoloader to route this load to a cache bin
+                    // Append the pseudoloader suffix so our PL can locate the image in the cache.
                     image.setFileName(cacheKey + ".osgearth_cachebin");
                     image.setWriteHint(osg::Image::EXTERNAL_FILE);
 
@@ -242,7 +279,7 @@ namespace
                         osg::ref_ptr<osgDB::Options> dbo = Registry::cloneOrCreateOptions(_writeOptions);
                         dbo->setPluginStringData("WriteImageHint", "IncludeData");
 
-                        OE_INFO << LC << "Writing image \"" << path << "\" to the cache as \"" << cacheKey << "\"\n";
+                        OE_INFO << LC << "Writing image \"" << image.getFileName() << "\" to the cache\n";
 
                         if (!_bin->write(cacheKey, &image, dbo.get()))
                         {
@@ -284,8 +321,6 @@ CacheBin::writeNode(const std::string&    key,
 }
 
 
-
-
 #undef  LC
 #define LC "[ReadImageFromCachePseudoLoader] "
 
@@ -315,15 +350,17 @@ namespace
             if (osgDB::getLowerCaseFileExtension(url) != "osgearth_cachebin")
                 return ReadResult::FILE_NOT_HANDLED;
 
-            CacheBin* bin = CacheBin::get(readOptions);
-            if ( !bin )
+            CacheSettings* cacheSettings = CacheSettings::get(readOptions);
+            if (!cacheSettings || !cacheSettings->isCacheEnabled() || !cacheSettings->getCacheBin())
+            {
                 return ReadResult::FILE_NOT_FOUND;
+            }
 
             std::string key = osgDB::getNameLessExtension(url);
             
             OE_DEBUG << LC << "Reading \"" << key << "\"\n";
 
-            osgEarth::ReadResult rr = bin->readObject(key, readOptions);
+            osgEarth::ReadResult rr = cacheSettings->getCacheBin()->readObject(key, readOptions);
             
             return rr.succeeded() ?
                 ReadResult(rr.getObject()) :
@@ -334,16 +371,19 @@ namespace
         {
             if (osgDB::getLowerCaseFileExtension(url) != "osgearth_cachebin")
                 return ReadResult::FILE_NOT_HANDLED;
-
-            CacheBin* bin = CacheBin::get(readOptions);
-            if ( !bin )
+            
+            CacheSettings* cacheSettings = CacheSettings::get(readOptions);
+            if (!cacheSettings || !cacheSettings->isCacheEnabled() || !cacheSettings->getCacheBin())
+            {
+                OE_DEBUG << LC << "Cache not enabled...!\n";
                 return ReadResult::FILE_NOT_FOUND;
+            }
 
             std::string key = osgDB::getNameLessExtension(url);
             
             OE_DEBUG << LC << "Reading \"" << key << "\"\n";
 
-            osgEarth::ReadResult rr = bin->readImage(key, readOptions);
+            osgEarth::ReadResult rr = cacheSettings->getCacheBin()->readImage(key, readOptions);
             
             return rr.succeeded() ?
                 ReadResult(rr.getImage()) :

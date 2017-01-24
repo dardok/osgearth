@@ -1,6 +1,6 @@
 /* -*-c++-*- */
 /* osgEarth - Dynamic map generation toolkit for OpenSceneGraph
-* Copyright 2015 Pelican Mapping
+* Copyright 2016 Pelican Mapping
 * http://osgearth.org
 *
 * osgEarth is free software; you can redistribute it and/or modify
@@ -30,6 +30,7 @@
 #include <osgEarth/ShaderGenerator>
 #include <osgEarth/GeoMath>
 #include <osgEarth/Utils>
+#include <osgEarth/ScreenSpaceLayout>
 #include <osgText/Text>
 #include <osg/Depth>
 #include <osgUtil/IntersectionVisitor>
@@ -101,6 +102,14 @@ _followFixedCourse( false )
     init( style );
 }
 
+LabelNode::LabelNode(const LabelNode& rhs, const osg::CopyOp& op) :
+GeoPositionNode(rhs, op),
+_labelRotationRad(0.),
+_followFixedCourse(false)
+{
+    //nop - unused
+}
+
 void
 LabelNode::init( const Style& style )
 {
@@ -132,7 +141,16 @@ LabelNode::setText( const std::string& text )
     osgText::Text* d = dynamic_cast<osgText::Text*>(_geode->getDrawable(0));
     if ( d )
     {
-        d->setText( text );
+        const TextSymbol* symbol = _style.get<TextSymbol>();
+
+        osgText::String::Encoding textEncoding = osgText::String::ENCODING_UNDEFINED;
+        if (symbol && symbol->encoding().isSet())
+        {
+            textEncoding = AnnotationUtils::convertTextSymbolEncoding(symbol->encoding().value());
+        }
+
+        d->setText(text, textEncoding);
+
         d->dirtyDisplayList();
         _text = text;
     }
@@ -169,32 +187,18 @@ LabelNode::setStyle( const Style& style )
     {
         _followFixedCourse = true;
         _labelRotationRad = osg::DegreesToRadians ( symbol->geographicCourse()->eval() );
-
-        double latRad;
-        double longRad;
-        GeoMath::destination( osg::DegreesToRadians( getPosition().y() ),
-                              osg::DegreesToRadians( getPosition().x() ),
-                              _labelRotationRad,
-                              2500.,
-                              latRad,
-                              longRad );
-        _geoPointProj.set ( osgEarth::SpatialReference::get("wgs84"),
-                                       osg::RadiansToDegrees(longRad),
-                                       osg::RadiansToDegrees(latRad),
-                                       0,
-                                       osgEarth::ALTMODE_ABSOLUTE );
     }
 
-    osg::Drawable* t = AnnotationUtils::createTextDrawable( _text, symbol, osg::Vec3(0,0,0) );
+    osg::Drawable* text = AnnotationUtils::createTextDrawable( _text, symbol, osg::Vec3(0,0,0) );
 
     const BBoxSymbol* bboxsymbol = _style.get<BBoxSymbol>();
-    if ( bboxsymbol && t )
+    if ( bboxsymbol && text )
     {
-        osg::Drawable* bboxGeom = new BboxDrawable( Utils::getBoundingBox(t), *bboxsymbol );
+        osg::Drawable* bboxGeom = new BboxDrawable( Utils::getBoundingBox(text), *bboxsymbol );
         _geode->addDrawable(bboxGeom);
     }
 
-    _geode->addDrawable(t);
+    _geode->addDrawable(text);
     _geode->setCullingActive(false);
 
     applyStyle( _style );
@@ -206,6 +210,14 @@ LabelNode::setStyle( const Style& style )
         "osgEarth.LabelNode",
         Registry::stateSetCache() );
 
+    updateLayoutData();
+    dirty();
+}
+
+void
+LabelNode::dirty()
+{
+    GeoPositionNode::dirty();
     updateLayoutData();
 }
 
@@ -231,11 +243,44 @@ LabelNode::updateLayoutData()
     }
     
     _dataLayout->setPriority(getPriority());
+    
+    GeoPoint location = getPosition();
+    location.makeGeographic();
+    double latRad;
+    double longRad;
+    GeoMath::destination(osg::DegreesToRadians(location.y()),
+        osg::DegreesToRadians(location.x()),
+        _labelRotationRad,
+        2500.,
+        latRad,
+        longRad);
+
+    _geoPointProj.set(osgEarth::SpatialReference::get("wgs84"),
+        osg::RadiansToDegrees(longRad),
+        osg::RadiansToDegrees(latRad),
+        0,
+        osgEarth::ALTMODE_ABSOLUTE);
+
+    _geoPointLoc.set(osgEarth::SpatialReference::get("wgs84"),
+        //location.getSRS(),
+        location.x(),
+        location.y(),
+        0,
+        osgEarth::ALTMODE_ABSOLUTE);
+
     const TextSymbol* ts = getStyle().get<TextSymbol>();
     if (ts)
     {
         _dataLayout->setPixelOffset(ts->pixelOffset().get());
-        _dataLayout->setRotationRad(_labelRotationRad);
+        
+        if (_followFixedCourse)
+        {
+            osg::Vec3d p0, p1;
+            _geoPointLoc.toWorld(p0);
+            _geoPointProj.toWorld(p1);
+            _dataLayout->setAnchorPoint(p0);
+            _dataLayout->setProjPoint(p1);
+        }
     }
 }
 
@@ -250,43 +295,6 @@ LabelNode::setDynamic( bool dynamic )
         d->setDataVariance( dynamic ? osg::Object::DYNAMIC : osg::Object::STATIC );
     }    
 }
-
-void
-LabelNode::traverse(osg::NodeVisitor &nv)
-{
-    if(_followFixedCourse)
-    {
-        osgUtil::CullVisitor* cv = NULL;
-        if ( nv.getVisitorType() == osg::NodeVisitor::CULL_VISITOR )
-        {
-            cv = Culling::asCullVisitor(nv);
-            osg::Camera* camera = cv->getCurrentCamera();
-
-            osg::Matrix matrix;
-            matrix.postMult(camera->getViewMatrix());
-            matrix.postMult(camera->getProjectionMatrix());
-            if (camera->getViewport())
-                matrix.postMult(camera->getViewport()->computeWindowMatrix());
-
-            GeoPoint pos( osgEarth::SpatialReference::get("wgs84"),
-                          getPosition().x(),
-                          getPosition().y(),
-                          0,
-                          osgEarth::ALTMODE_ABSOLUTE );
-
-            osg::Vec3d refOnWorld; pos.toWorld(refOnWorld);
-            osg::Vec3d projOnWorld; _geoPointProj.toWorld(projOnWorld);
-            osg::Vec3d refOnScreen = refOnWorld * matrix;
-            osg::Vec3d projOnScreen = projOnWorld * matrix;
-            projOnScreen -= refOnScreen;
-            _labelRotationRad = atan2 (projOnScreen.y(), projOnScreen.x());
-            if (_dataLayout.valid())
-                _dataLayout->setRotationRad(_labelRotationRad);
-        }
-    }
-    GeoPositionNode::traverse(nv);
-}
-
 
 //-------------------------------------------------------------------
 

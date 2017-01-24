@@ -1,6 +1,6 @@
 /* -*-c++-*- */
 /* osgEarth - Dynamic map generation toolkit for OpenSceneGraph
- * Copyright 2015 Pelican Mapping
+ * Copyright 2016 Pelican Mapping
  * http://osgearth.org
  *
  * osgEarth is free software; you can redistribute it and/or modify
@@ -69,8 +69,8 @@ namespace osgEarth
 
         protected:
             unsigned _numInstances;
-            bool     _optimize;
-            osg::ref_ptr<osg::Drawable::ComputeBoundingBoxCallback> _staticBBoxCallback;
+            osg::BoundingBox _bbox;
+            bool _optimize;
             std::list<osg::PrimitiveSet*> _primitiveSets;
         };
 

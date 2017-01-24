@@ -1,6 +1,6 @@
 /* -*-c++-*- */
 /* osgEarth - Dynamic map generation toolkit for OpenSceneGraph
-* Copyright 2015 Pelican Mapping
+* Copyright 2016 Pelican Mapping
 * http://osgearth.org
 *
 * osgEarth is free software; you can redistribute it and/or modify
@@ -48,11 +48,11 @@ public:
 
     virtual void onTileAdded(const osgEarth::TileKey& tileKey, osg::Node* terrain, TerrainCallbackContext&)
     {           
-        if ((int)tileKey.getLevelOfDetail() > _minLevel && _maxLevel < (int)tileKey.getLevelOfDetail())
+        if (!tileKey.valid() || ((int)tileKey.getLevelOfDetail() > _minLevel && _maxLevel < (int)tileKey.getLevelOfDetail()))
         {
             osg::Vec3d position = _locator->getLocator()->getPosition();
 
-            if (tileKey.getExtent().contains(position.x(), position.y()))
+            if (!tileKey.valid() || tileKey.getExtent().contains(position.x(), position.y()))
             {
                 //Compute our location in geocentric
                 const osg::EllipsoidModel* ellipsoid = tileKey.getProfile()->getSRS()->getEllipsoid();

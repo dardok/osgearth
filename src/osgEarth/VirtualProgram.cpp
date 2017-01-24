@@ -1,6 +1,6 @@
 /* -*-c++-*- */
 /* osgEarth - Dynamic map generation toolkit for OpenSceneGraph
- * Copyright 2015 Pelican Mapping
+ * Copyright 2016 Pelican Mapping
  * http://osgearth.org
  *
  * osgEarth is free software; you can redistribute it and/or modify
@@ -671,7 +671,8 @@ _inherit           ( true ),
 _inheritSet        ( false ),
 _logShaders        ( false ),
 _logPath           ( "" ),
-_acceptCallbacksVaryPerFrame( false )
+_acceptCallbacksVaryPerFrame( false ),
+_isAbstract        ( false )
 {
     // Note: we cannot set _active here. Wait until apply().
     // It will cause a conflict in the Registry.
@@ -703,7 +704,9 @@ _inherit           ( rhs._inherit ),
 _inheritSet        ( rhs._inheritSet ),
 _logShaders        ( rhs._logShaders ),
 _logPath           ( rhs._logPath ),
-_template          ( osg::clone(rhs._template.get()) )
+_template          ( osg::clone(rhs._template.get()) ),
+_acceptCallbacksVaryPerFrame( rhs._acceptCallbacksVaryPerFrame ),
+_isAbstract        ( rhs._isAbstract )
 {    
     // Attribute bindings.
     const osg::Program::AttribBindingList &abl = rhs.getAttribBindingList();
@@ -728,6 +731,7 @@ VirtualProgram::compare(const osg::StateAttribute& sa) const
     // compare each parameter in turn against the rhs.
     COMPARE_StateAttribute_Parameter(_mask);
     COMPARE_StateAttribute_Parameter(_inherit);
+    COMPARE_StateAttribute_Parameter(_isAbstract);
 
     // compare the shader maps. Need to lock them while comparing.
     {
@@ -1107,6 +1111,12 @@ VirtualProgram::apply( osg::State& state ) const
     {
         // cannot use capabilities here; it breaks serialization.
         _active = true; //Registry::capabilities().supportsGLSL();
+    }
+
+    // An abstract (pure virtual) program cannot be applied.
+    if (_isAbstract)
+    {
+        return;
     }
     
     const unsigned contextID = state.getContextID();
@@ -1685,14 +1695,16 @@ void VirtualProgram::setAcceptCallbacksVaryPerFrame(bool acceptCallbacksVaryPerF
 
 PolyShader::PolyShader() :
 _dirty( true ),
-_location( ShaderComp::LOCATION_UNDEFINED )
+_location( ShaderComp::LOCATION_UNDEFINED ),
+_nominalType(osg::Shader::VERTEX)
 {
     //nop
 }
 
 PolyShader::PolyShader(osg::Shader* shader) :
 _location( ShaderComp::LOCATION_UNDEFINED ),
-_nominalShader( shader )
+_nominalShader( shader ),
+_nominalType(osg::Shader::VERTEX)
 {
     _dirty = shader != 0L;
     if ( shader )
@@ -1701,9 +1713,6 @@ _nominalShader( shader )
 
         // extract the source before preprocessing:
         _source = shader->getShaderSource();
-
-        // then preprocess the shader:
-        //ShaderPreProcessor::run( shader );
     }
 }
 
@@ -1966,17 +1975,20 @@ static bool writeFunctions( osgDB::OutputStream& os, const osgEarth::VirtualProg
     return true;
 }
 
-REGISTER_OBJECT_WRAPPER(
-    VirtualProgram,
-    new osgEarth::VirtualProgram,
-    osgEarth::VirtualProgram,
-    "osg::Object osg::StateAttribute osgEarth::VirtualProgram")
+namespace
 {
-    ADD_BOOL_SERIALIZER( InheritShaders, true );
-    ADD_UINT_SERIALIZER( Mask, ~0 );
+    REGISTER_OBJECT_WRAPPER(
+        VirtualProgram,
+        new osgEarth::VirtualProgram,
+        osgEarth::VirtualProgram,
+        "osg::Object osg::StateAttribute osgEarth::VirtualProgram")
+    {
+        ADD_BOOL_SERIALIZER( InheritShaders, true );
+        ADD_UINT_SERIALIZER( Mask, ~0 );
 
-    ADD_USER_SERIALIZER( AttribBinding );
-    //ADD_USER_SERIALIZER( FragDataBinding );
-    ADD_USER_SERIALIZER( Functions );
+        ADD_USER_SERIALIZER( AttribBinding );
+        ADD_USER_SERIALIZER( Functions );
+
+        ADD_BOOL_SERIALIZER( IsAbstract, false );
+    }
 }
-

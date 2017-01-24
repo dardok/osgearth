@@ -1,6 +1,6 @@
 /* -*-c++-*- */
 /* osgEarth - Dynamic map generation toolkit for OpenSceneGraph
-* Copyright 2015 Pelican Mapping
+* Copyright 2016 Pelican Mapping
 * http://osgearth.org
 *
 * osgEarth is free software; you can redistribute it and/or modify
@@ -37,16 +37,76 @@ using namespace osgEarth;
 #define LC "[MPGeometry] "
 
 
+MPGeometry::MPGeometry() :
+osg::Geometry(),
+_frame(0L),
+_uidUniformNameID(0),
+_birthTimeUniformNameID(0u),
+_orderUniformNameID(0u),
+_opacityUniformNameID(0u),
+_texMatParentUniformNameID(0u),
+_tileKeyUniformNameID(0u),
+_minRangeUniformNameID(0u),
+_maxRangeUniformNameID(0u),
+_imageUnit(0),
+_imageUnitParent(0),
+_elevUnit(0),
+_supportsGLSL(false)
+{
+}
+
+MPGeometry::MPGeometry(const MPGeometry& rhs, const osg::CopyOp& cop) :
+osg::Geometry(rhs, cop),
+_frame(rhs._frame),
+_uidUniformNameID(rhs._uidUniformNameID),
+_birthTimeUniformNameID(rhs._birthTimeUniformNameID),
+_orderUniformNameID(rhs._orderUniformNameID),
+_opacityUniformNameID(rhs._opacityUniformNameID),
+_texMatParentUniformNameID(rhs._texMatParentUniformNameID),
+_tileKeyUniformNameID(rhs._tileKeyUniformNameID),
+_minRangeUniformNameID(rhs._minRangeUniformNameID),
+_maxRangeUniformNameID(rhs._maxRangeUniformNameID),
+_imageUnit(rhs._imageUnit),
+_imageUnitParent(rhs._imageUnitParent),
+_elevUnit(rhs._elevUnit),
+_supportsGLSL(rhs._supportsGLSL)
+{
+}
+
+
 MPGeometry::MPGeometry(const TileKey& key, const MapFrame& frame, int imageUnit) : 
 osg::Geometry    ( ),
 _frame           ( frame ),
-_imageUnit       ( imageUnit )
+_imageUnit       ( imageUnit ),
+_uidUniformNameID(0),
+_birthTimeUniformNameID(0u),
+_orderUniformNameID(0u),
+_opacityUniformNameID(0u),
+_texMatParentUniformNameID(0u),
+_tileKeyUniformNameID(0u),
+_minRangeUniformNameID(0u),
+_maxRangeUniformNameID(0u),
+_imageUnitParent(0),
+_elevUnit(0),
+_supportsGLSL(false)
 {
     _supportsGLSL = Registry::capabilities().supportsGLSL();
-
+    
+    // Encode the tile key in a uniform. Note! The X and Y components are presented
+    // modulo 2^16 form so they don't overrun single-precision space.
     unsigned tw, th;
     key.getProfile()->getNumTiles(key.getLOD(), tw, th);
-    _tileKeyValue.set( key.getTileX(), th-key.getTileY()-1.0f, key.getLOD(), -1.0f );
+
+    const double m = pow(2.0, 16.0);
+
+    double x = (double)key.getTileX();
+    double y = (double)(th - key.getTileY()-1);
+
+    _tileKeyValue.set(
+        (float)fmod(x, m),
+        (float)fmod(y, m),
+        (float)key.getLOD(),
+        -1.0f);
 
     _imageUnitParent = _imageUnit + 1; // temp
 
@@ -65,6 +125,10 @@ _imageUnit       ( imageUnit )
     // we will set these later (in TileModelCompiler)
     this->setUseDisplayList(false);
     this->setUseVertexBufferObjects(true);
+    
+#if OSG_MIN_VERSION_REQUIRED(3,5,6)
+    if(osg::DisplaySettings::instance()->getVertexBufferHint() == osg::DisplaySettings::VERTEX_ARRAY_OBJECT) this->setUseVertexArrayObject(true);
+#endif
 }
 
 
@@ -84,9 +148,12 @@ MPGeometry::renderPrimitiveSets(osg::State& state,
             // This should only happen is the layer ordering changes;
             // If layers are added or removed, the Tile gets rebuilt and
             // the point is moot.
+            ImageLayerVector layers;
+            _frame.getLayers(layers);
+
             std::vector<Layer> reordered;
-            const ImageLayerVector& layers = _frame.imageLayers();
             reordered.reserve( layers.size() );
+
             for( ImageLayerVector::const_iterator i = layers.begin(); i != layers.end(); ++i )
             {
                 std::vector<Layer>::iterator j = std::find( _layers.begin(), _layers.end(), i->get()->getUID() );
@@ -141,6 +208,8 @@ MPGeometry::renderPrimitiveSets(osg::State& state,
         uidLocation          = pcp->getUniformLocation( _uidUniformNameID );
         orderLocation        = pcp->getUniformLocation( _orderUniformNameID );
         texMatParentLocation = pcp->getUniformLocation( _texMatParentUniformNameID );
+        minRangeLocation = pcp->getUniformLocation( _minRangeUniformNameID );
+        maxRangeLocation = pcp->getUniformLocation( _maxRangeUniformNameID );
     }
     
     // apply the tilekey uniform once.
@@ -193,13 +262,10 @@ MPGeometry::renderPrimitiveSets(osg::State& state,
 
     // remember whether we applied a parent texture.
     bool usedTexParent = false;
-    bool useMinVisibleRange = false;
-    bool useMaxVisibleRange = false;
 
     if ( _layers.size() > 0 )
     {
         float prev_opacity        = -1.0f;
-        float prev_alphaThreshold = -1.0f;
 
         // first bind any shared layers. We still have to do this even if we are
         // in !renderColor mode b/c these textures could be used by vertex shaders
@@ -234,29 +300,8 @@ MPGeometry::renderPrimitiveSets(osg::State& state,
                         }
                     }
                 }
-
-                // check for min/rax range usage.
-                const ImageLayerOptions& layerOptions = layer._imageLayer->getImageLayerOptions();
-
-                if ( layerOptions.minVisibleRange().isSet() )
-                    useMinVisibleRange = true;
-                if ( layerOptions.maxVisibleRange().isSet() )
-                    useMaxVisibleRange = true;
             }
         }
-
-        // look up the minRange uniform if necessary
-        if ( useMinVisibleRange && pcp )
-        {
-            minRangeLocation = pcp->getUniformLocation( _minRangeUniformNameID );
-        }
-        
-        // look up the maxRange uniform if necessary
-        if ( useMaxVisibleRange && pcp )
-        {
-            maxRangeLocation = pcp->getUniformLocation( _maxRangeUniformNameID );
-        }
-
         if (renderColor)
         {
             // find the first opaque layer, top-down, and start there:
@@ -541,6 +586,20 @@ MPGeometry::compileGLObjects( osg::RenderInfo& renderInfo ) const
     osg::Geometry::compileGLObjects( renderInfo );
 }
 
+#if OSG_MIN_VERSION_REQUIRED(3,5,6)
+osg::VertexArrayState*
+MPGeometry::createVertexArrayState(osg::RenderInfo& renderInfo) const
+{
+    osg::VertexArrayState* vas = osg::Geometry::createVertexArrayState(renderInfo);
+    
+    // make sure we have array dispatchers for the multipass coords
+    if(osg::DisplaySettings::instance()->getVertexBufferHint() == osg::DisplaySettings::VERTEX_ARRAY_OBJECT)
+        vas->assignTexCoordArrayDispatcher(_texCoordList.size() + 2);
+
+    return vas;
+}
+#endif
+
 
 void 
 MPGeometry::drawImplementation(osg::RenderInfo& renderInfo) const
@@ -556,21 +615,25 @@ MPGeometry::drawImplementation(osg::RenderInfo& renderInfo) const
 
     bool hasVertexAttributes = !_vertexAttribList.empty();
 
-    osg::ArrayDispatchers& arrayDispatchers = state.getArrayDispatchers();
+#if OSG_VERSION_LESS_THAN(3,5,6)
+    osg::ArrayDispatchers& dispatchers = state.getArrayDispatchers();
+#else
+    osg::AttributeDispatchers& dispatchers = state.getAttributeDispatchers();
+#endif
 
-    arrayDispatchers.reset();
-    arrayDispatchers.setUseVertexAttribAlias(state.getUseVertexAttributeAliasing());
+    dispatchers.reset();
+    dispatchers.setUseVertexAttribAlias(state.getUseVertexAttributeAliasing());
 
 
     //Remove?
 #if OSG_VERSION_LESS_THAN(3,1,8)
-    arrayDispatchers.setUseGLBeginEndAdapter(false);
+    dispatchers.setUseGLBeginEndAdapter(false);
 #endif
 
 #if OSG_MIN_VERSION_REQUIRED(3,1,8)
-    arrayDispatchers.activateNormalArray(_normalArray.get());
+    dispatchers.activateNormalArray(_normalArray.get());
 #else
-    arrayDispatchers.activateNormalArray(_normalData.binding, _normalData.array.get(), _normalData.indices.get());
+    dispatchers.activateNormalArray(_normalData.binding, _normalData.array.get(), _normalData.indices.get());
 #endif
     
 
@@ -579,15 +642,19 @@ MPGeometry::drawImplementation(osg::RenderInfo& renderInfo) const
         for(unsigned int unit=0;unit<_vertexAttribList.size();++unit)
         {
 #if OSG_MIN_VERSION_REQUIRED(3,1,8)
-            arrayDispatchers.activateVertexAttribArray(unit, _vertexAttribList[unit].get());
+            dispatchers.activateVertexAttribArray(unit, _vertexAttribList[unit].get());
 #else
-            arrayDispatchers.activateVertexAttribArray(_vertexAttribList[unit].binding, unit, _vertexAttribList[unit].array.get(), _vertexAttribList[unit].indices.get());
+            dispatchers.activateVertexAttribArray(_vertexAttribList[unit].binding, unit, _vertexAttribList[unit].array.get(), _vertexAttribList[unit].indices.get());
 #endif             
         }
     }
 
     // dispatch any attributes that are bound overall
-    arrayDispatchers.dispatch(BIND_OVERALL,0);
+#if OSG_VERSION_LESS_THAN(3,5,6)
+    dispatchers.dispatch(BIND_OVERALL,0);
+#else
+    dispatchers.dispatch(0);
+#endif
     state.lazyDisablingOfVertexAttributes();
 
 
@@ -643,8 +710,13 @@ MPGeometry::drawImplementation(osg::RenderInfo& renderInfo) const
     renderPrimitiveSets(state, renderColor, true);
 
     // unbind the VBO's if any are used.
-    state.unbindVertexBufferObject();
-    state.unbindElementBufferObject();
+#if OSG_MIN_VERSION_REQUIRED(3,5,6)
+    if (!state.useVertexArrayObject(_useVertexArrayObject) || state.getCurrentVertexArrayState()->getRequiresSetArrays())
+#endif
+    {
+        state.unbindVertexBufferObject();
+        state.unbindElementBufferObject();
+    }
 }
 
 void

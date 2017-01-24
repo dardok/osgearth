@@ -1,6 +1,6 @@
 /* -*-c++-*- */
 /* osgEarth - Dynamic map generation toolkit for OpenSceneGraph
-* Copyright 2015 Pelican Mapping
+* Copyright 2016 Pelican Mapping
 * http://osgearth.org
 *
 * osgEarth is free software; you can redistribute it and/or modify
@@ -64,6 +64,9 @@ namespace osgEarth { namespace Util {
         void setFileLocationCallback(osgDB::FileLocationCallback* cb) { _fileLocationCallback = cb; }
         osgDB::FileLocationCallback* getFileLocationCallback() const  { return _fileLocationCallback.get(); }
 
+        void setEnableCancelation(bool value);
+        bool getEnableCancalation() const;
+
         /**
          * Gets the profile for the SimplePager.
          */
@@ -74,6 +77,38 @@ namespace osgEarth { namespace Util {
         * Subclasses override this method to provide their data for TileKeys
         */
         virtual osg::Node* createNode(const TileKey& key, ProgressCallback* progress);
+
+        /**
+         * Callback structure for pager events
+         */
+        struct Callback : public osg::Referenced
+        {
+            /**
+             * Called after a new tile is created, but before it's merged into the live
+             * scene graph. Runs in a pager thread.
+             */
+            virtual void onCreateNode(const TileKey& key, osg::Node* node) { }
+        };
+
+        /** Adds a pager callback. */
+        void addCallback(Callback* callback);
+
+        /** Removes a pager callback. */
+        void removeCallback(Callback* callback);
+
+    public:
+        struct ProgressTracker : public osg::NodeCallback {
+            ProgressTracker(osg::NodeCallback*);
+            osg::ref_ptr<ProgressCallback> _progress[4];
+            void operator()(osg::Node*, osg::NodeVisitor*);
+        };
+
+        /**
+        * Loads the PagedLOD hierarchy for this key.
+        */
+        osg::Node* loadKey(const TileKey& key, ProgressTracker* progress);
+
+    protected:
 
         /**
         * Gets the bounding sphere for a given TileKey.
@@ -90,20 +125,6 @@ namespace osgEarth { namespace Util {
         */
         osg::Node* createPagedNode(const TileKey& key, ProgressCallback* progress);
 
-    public:
-        struct ProgressTracker : public osg::NodeCallback {
-            ProgressTracker(osg::NodeCallback*);
-            osg::ref_ptr<ProgressCallback> _progress[4];
-            void operator()(osg::Node*, osg::NodeVisitor*);
-        };
-
-        /**
-        * Loads the PagedLOD hierarchy for this key.
-        */
-        osg::Node* loadKey(const TileKey& key, ProgressTracker* progress);
-
-    protected:
-
         bool _additive;
         double _rangeFactor;
         unsigned int _minLevel;
@@ -113,6 +134,13 @@ namespace osgEarth { namespace Util {
         osg::ref_ptr< osgDB::FileLocationCallback > _fileLocationCallback;
         float _priorityScale;
         float _priorityOffset;
+        bool _canCancel;
+        
+        mutable Threading::Mutex _mutex;
+        typedef std::vector< osg::ref_ptr<Callback> > Callbacks;
+        Callbacks _callbacks;
+
+        void fire_onCreateNode(const TileKey& key, osg::Node* node);
     };
 
 } } // namespace osgEarth::Util

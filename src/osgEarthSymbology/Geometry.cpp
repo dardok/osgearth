@@ -1,6 +1,6 @@
 /* -*-c++-*- */
 /* osgEarth - Dynamic map generation toolkit for OpenSceneGraph
-* Copyright 2015 Pelican Mapping
+* Copyright 2016 Pelican Mapping
 * http://osgearth.org
 *
 * osgEarth is free software; you can redistribute it and/or modify
@@ -36,6 +36,8 @@ using namespace osgEarth::Symbology;
 using namespace geos;
 using namespace geos::operation;
 #endif
+
+#define GEOS_OUT OE_DEBUG
 
 #define LC "[Geometry] "
 
@@ -251,8 +253,14 @@ Geometry::crop( const Polygon* cropPoly, osg::ref_ptr<Geometry>& output ) const
                 cropGeom,
                 overlay::OverlayOp::opINTERSECTION );
         }
+        catch (const geos::util::TopologyException& ex) {
+            GEOS_OUT << LC << "Crop(GEOS): "
+                << (ex.what()? ex.what() : " no error message")
+                << std::endl;
+            outGeom = 0L;
+        }
         catch(const geos::util::GEOSException& ex) {
-            OE_NOTICE << LC << "Crop(GEOS): "
+            OE_INFO << LC << "Crop(GEOS): "
                 << (ex.what()? ex.what() : " no error message")
                 << std::endl;
             outGeom = 0L;
@@ -303,6 +311,18 @@ Geometry::crop( const Polygon* cropPoly, osg::ref_ptr<Geometry>& output ) const
 }
 
 bool
+Geometry::crop( const Bounds& bounds, osg::ref_ptr<Geometry>& output ) const
+{
+    osg::ref_ptr<Polygon> poly = new Polygon;
+    poly->resize( 4 );        
+    (*poly)[0].set(bounds.xMin(), bounds.yMin(), 0);
+    (*poly)[1].set(bounds.xMax(), bounds.yMin(), 0);
+    (*poly)[2].set(bounds.xMax(), bounds.yMax(), 0);
+    (*poly)[3].set(bounds.xMin(), bounds.yMax(), 0);
+    return crop(poly, output);
+}
+
+bool
 Geometry::geounion( const Geometry* other, osg::ref_ptr<Geometry>& output ) const
 {
 #ifdef OSGEARTH_HAVE_GEOS
@@ -324,8 +344,14 @@ Geometry::geounion( const Geometry* other, osg::ref_ptr<Geometry>& output ) cons
                 otherGeom,
                 overlay::OverlayOp::opUNION );
         }
+        catch (const geos::util::TopologyException& ex) {
+            GEOS_OUT << LC << "Crop(GEOS): "
+                << (ex.what()? ex.what() : " no error message")
+                << std::endl;
+            outGeom = 0L;
+        }
         catch(const geos::util::GEOSException& ex) {
-            OE_NOTICE << LC << "Union(GEOS): "
+            OE_INFO << LC << "Union(GEOS): "
                 << (ex.what()? ex.what() : " no error message")
                 << std::endl;
             outGeom = 0L;
@@ -395,8 +421,14 @@ Geometry::difference( const Polygon* diffPolygon, osg::ref_ptr<Geometry>& output
                 diffGeom,
                 overlay::OverlayOp::opDIFFERENCE );
         }
+        catch (const geos::util::TopologyException& ex) {
+            GEOS_OUT << LC << "Crop(GEOS): "
+                << (ex.what()? ex.what() : " no error message")
+                << std::endl;
+            outGeom = 0L;
+        }
         catch(const geos::util::GEOSException& ex) {
-            OE_NOTICE << LC << "Diff(GEOS): "
+            OE_INFO << LC << "Diff(GEOS): "
                 << (ex.what()? ex.what() : " no error message")
                 << std::endl;
             outGeom = 0L;
@@ -423,6 +455,35 @@ Geometry::difference( const Polygon* diffPolygon, osg::ref_ptr<Geometry>& output
 #else // OSGEARTH_HAVE_GEOS
 
     OE_WARN << LC << "Difference failed - GEOS not available" << std::endl;
+    return false;
+
+#endif // OSGEARTH_HAVE_GEOS
+}
+
+bool
+Geometry::intersects(
+            const class Geometry* other
+            ) const
+{
+#ifdef OSGEARTH_HAVE_GEOS
+
+    GEOSContext gc;
+
+    //Create the GEOS Geometries
+    geom::Geometry* inGeom   = gc.importGeometry( this );
+    geom::Geometry* otherGeom = gc.importGeometry( other );
+
+    bool intersects = inGeom->intersects( otherGeom );
+
+    //Destroy the geometry
+    gc.disposeGeometry( otherGeom );
+    gc.disposeGeometry( inGeom );
+
+    return intersects;
+
+#else // OSGEARTH_HAVE_GEOS
+
+    OE_WARN << LC << "Intersects failed - GEOS not available" << std::endl;
     return false;
 
 #endif // OSGEARTH_HAVE_GEOS
@@ -839,8 +900,13 @@ MultiGeometry::~MultiGeometry()
 Geometry::Type
 MultiGeometry::getComponentType() const
 {
-    // dicey.
-    return _parts.size() > 0 ? _parts.front()->getType() : TYPE_UNKNOWN;
+    if (_parts.size() == 0)
+        return TYPE_UNKNOWN;
+
+    if (_parts.front()->getType() == TYPE_MULTI)
+        return _parts.front()->getComponentType();
+
+    return _parts.front()->getType();
 }
 
 int

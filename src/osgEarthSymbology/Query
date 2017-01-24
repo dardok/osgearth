@@ -1,6 +1,6 @@
 /* -*-c++-*- */
 /* osgEarth - Dynamic map generation toolkit for OpenSceneGraph
- * Copyright 2015 Pelican Mapping
+ * Copyright 2016 Pelican Mapping
  * http://osgearth.org
  *
  * osgEarth is free software; you can redistribute it and/or modify
@@ -28,6 +28,8 @@
 
 namespace osgEarth { namespace Symbology
 {
+    using namespace osgEarth;
+
     /**
      * A query filter that you can use to limit a set of symbology to process.
      */
@@ -35,6 +37,8 @@ namespace osgEarth { namespace Symbology
     {
     public:
         Query( const Config& conf =Config() );
+
+        Query(const Query& rhs);
 
         virtual ~Query() { }
 
@@ -56,9 +60,10 @@ namespace osgEarth { namespace Symbology
         optional<osgEarth::TileKey>& tileKey() { return _tileKey; }
         const optional<osgEarth::TileKey>& tileKey() const { return _tileKey; }
 
-        const Map* getMap() const;
+        const MapFrame& getMap() const { return _mapFrame; }
 
         void setMap(const Map* map);
+        void setMap(const MapFrame& frame);
         
 
         /**
@@ -76,7 +81,7 @@ namespace osgEarth { namespace Symbology
         optional<std::string> _expression;
         optional<std::string> _orderby;
         optional<osgEarth::TileKey> _tileKey;
-        const Map* _map;
+        MapFrame _mapFrame;
     };
 
 } } // namespace osgEarth::Symbology

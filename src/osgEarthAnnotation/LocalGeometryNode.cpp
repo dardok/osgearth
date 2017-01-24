@@ -1,6 +1,6 @@
 /* -*-c++-*- */
 /* osgEarth - Dynamic map generation toolkit for OpenSceneGraph
-* Copyright 2015 Pelican Mapping
+* Copyright 2016 Pelican Mapping
 * http://osgearth.org
 *
 * osgEarth is free software; you can redistribute it and/or modify
@@ -35,8 +35,16 @@ using namespace osgEarth::Annotation;
 using namespace osgEarth::Features;
 
 
+LocalGeometryNode::LocalGeometryNode() :
+GeoPositionNode(),
+_clampRelative(false)
+{
+    //nop - unused
+}
+
 LocalGeometryNode::LocalGeometryNode(MapNode* mapNode) :
-GeoPositionNode()
+GeoPositionNode(),
+_clampRelative(false)
 {
     LocalGeometryNode::setMapNode( mapNode );
     init( 0L );
@@ -47,7 +55,8 @@ LocalGeometryNode::LocalGeometryNode(MapNode*     mapNode,
                                      const Style& style) :
 GeoPositionNode(),
 _geom    ( geom ),
-_style   ( style )
+_style   ( style ),
+_clampRelative(false)
 {
     LocalGeometryNode::setMapNode( mapNode );
     init( 0L );
@@ -59,7 +68,8 @@ LocalGeometryNode::LocalGeometryNode(MapNode*     mapNode,
                                      const Style& style) :
 GeoPositionNode(),
 _node    ( node ),
-_style   ( style )
+_style   ( style ),
+_clampRelative(false)
 {
     LocalGeometryNode::setMapNode( mapNode );
     init( 0L );
@@ -208,30 +218,51 @@ LocalGeometryNode::applyAltitudeSymbology(const Style& style)
 
 void
 LocalGeometryNode::onTileAdded(const TileKey&          key, 
-                               osg::Node*              patch, 
+                               osg::Node*              graph, 
                                TerrainCallbackContext& context)
 {
-    // if key and data intersect then
-    if ( _boundingPT.contains(patch->getBound()) )
+    bool needsClamp;
+
+    // This was faster, but less precise and resulted in a lot of unnecessary clamp attempts:
+    //if ( _boundingPT.contains(patch->getBound()) )
+
+    // Does the tile key's polytope intersect the world bounds or this object?
+    // (taking getParent(0) gives the world-tranformed bounds vs. local bounds)
+    if (key.valid())
+    {
+        osg::Polytope tope;
+        key.getExtent().createPolytope(tope);
+        needsClamp = tope.contains(this->getParent(0)->getBound());
+    }
+    else
+    {
+        // with no key, must clamp no matter what
+        needsClamp = true;
+    }
+
+    if (needsClamp)
     {    
-        clampToScene( patch, context.getTerrain() );
-        this->dirtyBound();
+        clamp(graph, context.getTerrain());
     }
 }
 
 void
-LocalGeometryNode::clampToScene(osg::Node* patch, const Terrain* terrain)
+LocalGeometryNode::clamp(osg::Node* graph, const Terrain* terrain)
 {
-    GeometryClamper clamper;
+    if (terrain && graph)
+    {
+        GeometryClamper clamper;
 
-    clamper.setTerrainPatch( patch );
-    clamper.setTerrainSRS( terrain ? terrain->getSRS() : 0L );
-    clamper.setPreserveZ( _clampRelative );
-    clamper.setOffset( getPosition().alt() );
+        clamper.setTerrainPatch( graph );
+        clamper.setTerrainSRS( terrain ? terrain->getSRS() : 0L );
+        clamper.setPreserveZ( _clampRelative );
+        clamper.setOffset( getPosition().alt() );
 
-    this->accept( clamper );
+        this->accept( clamper );
+    }
 }
 
+#if 0
 osg::BoundingSphere
 LocalGeometryNode::computeBound() const
 {
@@ -278,6 +309,7 @@ LocalGeometryNode::computeBound() const
 
     return bs;
 }
+#endif
 
 void
 LocalGeometryNode::dirty()
@@ -287,7 +319,7 @@ LocalGeometryNode::dirty()
     // re-clamp the geometry if necessary.
     if ( _clampCallback.valid() && getMapNode() )
     {
-        clampToScene( getMapNode()->getTerrain()->getGraph(), getMapNode()->getTerrain() );
+        clamp( getMapNode()->getTerrain()->getGraph(), getMapNode()->getTerrain() );
     }
 }
 
@@ -299,7 +331,8 @@ OSGEARTH_REGISTER_ANNOTATION( local_geometry, osgEarth::Annotation::LocalGeometr
 LocalGeometryNode::LocalGeometryNode(MapNode*              mapNode,
                                      const Config&         conf,
                                      const osgDB::Options* dbOptions) :
-GeoPositionNode( mapNode, conf )
+GeoPositionNode( mapNode, conf ),
+_clampRelative(false)
 {
     if ( conf.hasChild("geometry") )
     {

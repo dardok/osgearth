@@ -1,6 +1,6 @@
 /* -*-c++-*- */
 /* osgEarth - Dynamic map generation toolkit for OpenSceneGraph
- * Copyright 2015 Pelican Mapping
+ * Copyright 2016 Pelican Mapping
  * http://osgearth.org
  *
  * osgEarth is free software; you can redistribute it and/or modify
@@ -134,5 +134,5 @@ namespace
 }
 
 /** static registration of the bin */
-extern "C" void osgEarth_AutoScaleBin_registration(void) {}
-static osgEarthRegisterRenderBinProxy<AutoScaleRenderBin> s_regbin(AUTO_SCALE_BIN_NAME);
+//extern "C" void osgEarth_AutoScaleBin_registration(void) {}
+//static osgEarthRegisterRenderBinProxy<AutoScaleRenderBin> s_regbin(AUTO_SCALE_BIN_NAME);

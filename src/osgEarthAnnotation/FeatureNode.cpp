@@ -1,6 +1,6 @@
 /* -*-c++-*- */
 /* osgEarth - Dynamic map generation toolkit for OpenSceneGraph
-* Copyright 2015 Pelican Mapping
+* Copyright 2016 Pelican Mapping
 * http://osgearth.org
 *
 * osgEarth is free software; you can redistribute it and/or modify
@@ -62,7 +62,7 @@ _styleSheet        ( styleSheet )
     _features.push_back( feature );
 
     FeatureNode::setMapNode( mapNode );
-    
+
     Style style = in_style;
     if (style.empty() && feature->style().isSet())
     {
@@ -72,7 +72,7 @@ _styleSheet        ( styleSheet )
     setStyle( style );
 }
 
-FeatureNode::FeatureNode(MapNode* mapNode, 
+FeatureNode::FeatureNode(MapNode* mapNode,
                          FeatureList& features,
                          const Style& style,
                          const GeometryCompilerOptions& options,
@@ -108,7 +108,7 @@ FeatureNode::build()
 
     // compilation options.
     GeometryCompilerOptions options = _options;
-    
+
     // figure out what kind of altitude manipulation we need to perform.
     AnnotationUtils::AltitudePolicy ap;
     AnnotationUtils::getAltitudePolicy( style, ap );
@@ -175,7 +175,7 @@ FeatureNode::build()
         {
             node = AnnotationUtils::installTwoPassAlpha( node );
         }
-        
+
         _attachPoint = new osg::Group();
         _attachPoint->addChild( node );
 
@@ -201,7 +201,7 @@ FeatureNode::build()
             }
         }
 
-        else 
+        else
         {
             this->addChild( _attachPoint );
 
@@ -211,14 +211,17 @@ FeatureNode::build()
             applyRenderSymbology( style );
         }
 
-        if ( ap.sceneClamping )
+        if ( getMapNode()->getTerrain() )
         {
-            getMapNode()->getTerrain()->addTerrainCallback( _clampCallback.get() );
-            clamp( getMapNode()->getTerrain(), getMapNode()->getTerrain()->getGraph() );
-        }
-        else
-        {
-            getMapNode()->getTerrain()->removeTerrainCallback( _clampCallback.get() );
+            if ( ap.sceneClamping )
+            {
+                getMapNode()->getTerrain()->addTerrainCallback( _clampCallback.get() );
+                clamp( getMapNode()->getTerrain()->getGraph(), getMapNode()->getTerrain() );
+            }
+            else
+            {
+                getMapNode()->getTerrain()->removeTerrainCallback( _clampCallback.get() );
+            }
         }
     }
 }
@@ -228,7 +231,7 @@ FeatureNode::setMapNode( MapNode* mapNode )
 {
     if ( getMapNode() != mapNode )
     {
-        if (_clampCallback.valid() && getMapNode())
+        if (_clampCallback.valid() && getMapNode() && getMapNode()->getTerrain())
             getMapNode()->getTerrain()->removeTerrainCallback( _clampCallback.get() );
 
         AnnotationNode::setMapNode( mapNode );
@@ -292,31 +295,50 @@ void FeatureNode::init()
 
 // This will be called by AnnotationNode when a new terrain tile comes in.
 void
-FeatureNode::onTileAdded(const TileKey&          key, 
-                         osg::Node*              tile, 
+FeatureNode::onTileAdded(const TileKey&          key,
+                         osg::Node*              graph,
                          TerrainCallbackContext& context)
 {
-    if ( !tile || _featurePolytope.contains( tile->getBound() ) )
+    bool needsClamp;
+
+    if (key.valid())
     {
-        clamp( context.getTerrain(), tile );
+        osg::Polytope tope;
+        key.getExtent().createPolytope(tope);
+        needsClamp = tope.contains(this->getBound());
+    }
+    else
+    {
+        // without a valid tilekey we don't know the extent of the change,
+        // so clamping is required.
+        needsClamp = true;
+    }
+
+    if (needsClamp)
+    {
+        clamp(graph, context.getTerrain());
     }
 }
 
 void
-FeatureNode::clamp(const Terrain* terrain, osg::Node* patch)
+FeatureNode::clamp(osg::Node* graph, const Terrain* terrain)
 {
-    if ( terrain && patch )
+    if ( terrain && graph )
     {
         const AltitudeSymbol* alt = getStyle().get<AltitudeSymbol>();
+        if (alt && alt->technique() != alt->TECHNIQUE_SCENE)
+            return;
+
         bool relative = alt && alt->clamping() == alt->CLAMP_RELATIVE_TO_TERRAIN && alt->technique() == alt->TECHNIQUE_SCENE;
+        float offset = alt ? alt->verticalOffset()->eval() : 0.0f;
 
         GeometryClamper clamper;
-        clamper.setTerrainPatch( patch );
+        clamper.setTerrainPatch( graph );
         clamper.setTerrainSRS( terrain->getSRS() );
         clamper.setPreserveZ( relative );
+        clamper.setOffset( offset );
 
         this->accept( clamper );
-        this->dirtyBound();
     }
 }
 
@@ -338,7 +360,7 @@ AnnotationNode(conf)
         if ( !geom.valid() )
             OE_WARN << LC << "Config is missing required 'geometry' element" << std::endl;
     }
-    
+
     osg::ref_ptr<const SpatialReference> srs;
     srs = SpatialReference::create( conf.value("srs"), conf.value("vdatum") );
     if ( !srs.valid() )
@@ -364,7 +386,7 @@ AnnotationNode(conf)
 
 Config
 FeatureNode::getConfig() const
-{    
+{
     Config conf("feature");
 
     if ( !_features.empty() )

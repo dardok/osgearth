@@ -1,6 +1,6 @@
 /* -*-c++-*- */
 /* osgEarth - Dynamic map generation toolkit for OpenSceneGraph
- * Copyright 2015 Pelican Mapping
+ * Copyright 2016 Pelican Mapping
  * http://osgearth.org
  *
  * osgEarth is free software; you can redistribute it and/or modify
@@ -39,6 +39,7 @@
 #include <cmath>
 
 #define LC "[GeoData] "
+
 
 using namespace osgEarth;
 
@@ -319,6 +320,33 @@ GeoPoint::transform(const SpatialReference* outSRS) const
 }
 
 bool
+GeoPoint::transformInPlace(const SpatialReference* srs) 
+{
+    if ( isValid() && srs )
+    {
+        osg::Vec3d out;
+        if ( _altMode == ALTMODE_ABSOLUTE )
+        {
+            if ( _srs->transform(_p, srs, out) )
+            {
+                set(srs, out, ALTMODE_ABSOLUTE);
+                return true;
+            }
+        }
+        else // if ( _altMode == ALTMODE_RELATIVE )
+        {
+            if ( _srs->transform2D(_p.x(), _p.y(), srs, out.x(), out.y()) )
+            {
+                out.z() = _p.z();
+                set(srs, out, ALTMODE_RELATIVE);
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+bool
 GeoPoint::transformZ(const AltitudeMode& altMode, const TerrainResolver* terrain ) 
 {
     double z;
@@ -509,7 +537,7 @@ GeoPoint::distanceTo(const GeoPoint& rhs) const
         }
         else
         {
-            GeoPoint rhsT = transform(rhs.getSRS());
+            GeoPoint rhsT = rhs.transform(getSRS());
             return (vec3d() - rhsT.vec3d()).length();
         }
     }
@@ -523,6 +551,15 @@ GeoPoint::distanceTo(const GeoPoint& rhs) const
             osg::DegreesToRadians(p2.y()), osg::DegreesToRadians(p2.x()),
             getSRS()->getGeographicSRS()->getEllipsoid()->getRadiusEquator() );
     }
+}
+
+std::string
+GeoPoint::toString() const
+{
+    std::stringstream buf;
+    buf << "x=" << x() << ", y=" << y() << ", z=" << z() << "; m=" <<
+        (_altMode == ALTMODE_ABSOLUTE ? "abs" : "rel");
+    return buf.str();
 }
 
 
@@ -1909,7 +1946,7 @@ GeoImage::reproject(const SpatialReference* to_srs, const GeoExtent* to_extent, 
     }
     else
     {
-         destExtent = getExtent().transform(to_srs);    
+        destExtent = getExtent().transform(to_srs);    
     }
 
     osg::Image* resultImage = 0L;
@@ -1924,7 +1961,7 @@ GeoImage::reproject(const SpatialReference* to_srs, const GeoExtent* to_extent, 
     {
         // if either of the SRS is a custom projection, we have to do a manual reprojection since
         // GDAL will not recognize the SRS.
-        resultImage = manualReproject(getImage(), getExtent(), *to_extent, useBilinearInterpolation && isNormalized, width, height);
+        resultImage = manualReproject(getImage(), getExtent(), destExtent, useBilinearInterpolation && isNormalized, width, height);
     }
     else
     {
@@ -2006,14 +2043,16 @@ _maxHeight  ( 0.0f )
 GeoHeightField::GeoHeightField(osg::HeightField* heightField,
                                const GeoExtent&  extent) :
 _heightField( heightField ),
-_extent     ( extent )
+_extent     ( extent ),
+_minHeight( FLT_MAX ),
+_maxHeight( -FLT_MAX )
 {
     if ( _heightField.valid() && extent.isInvalid() )
     {
         OE_WARN << LC << "Created with a valid heightfield AND INVALID extent" << std::endl;
     }
 
-    else if ( _heightField )
+    else if ( _heightField.valid() )
     {
         double minx, miny, maxx, maxy;
         _extent.getBounds(minx, miny, maxx, maxy);
@@ -2023,7 +2062,6 @@ _extent     ( extent )
         _heightField->setYInterval( (maxy - miny)/(double)(_heightField->getNumRows()-1) );
         _heightField->setBorderWidth( 0 );
 
-        _minHeight = FLT_MAX, _maxHeight = -FLT_MAX;
         const osg::HeightField::HeightList& heights = _heightField->getHeightList();
         for( unsigned i=0; i<heights.size(); ++i )
         {
@@ -2073,7 +2111,9 @@ GeoHeightField::getElevation(const SpatialReference* inputSRS,
             interp);
 
         // if the vertical datums don't match, do a conversion:
-        if ( out_elevation != NO_DATA_VALUE && outputSRS && !extentSRS->isVertEquivalentTo(outputSRS) )
+        if (out_elevation != NO_DATA_VALUE && 
+            outputSRS && 
+            !extentSRS->isVertEquivalentTo(outputSRS) )
         {
             // if the caller provided a custom output SRS, perform the appropriate
             // Z transformation. This requires a lat/long point:
@@ -2086,7 +2126,7 @@ GeoHeightField::getElevation(const SpatialReference* inputSRS,
 
             VerticalDatum::transform(
                 extentSRS->getVerticalDatum(),
-                outputSRS ? outputSRS->getVerticalDatum() : 0L,
+                outputSRS->getVerticalDatum(),
                 geolocal.y(), geolocal.x(), out_elevation);
         }
 
@@ -2123,9 +2163,9 @@ GeoHeightField::createSubSample( const GeoExtent& destEx, unsigned int width, un
     double xstep = div / (double)(width-1);
     double ystep = div / (double)(height-1);
     
-    for( x = x0, col = 0; col < width; x += xstep, col++ )
+    for( x = x0, col = 0; col < (int)width; x += xstep, col++ )
     {
-        for( y = y0, row = 0; row < height; y += ystep, row++ )
+        for( y = y0, row = 0; row < (int)height; y += ystep, row++ )
         {
             float height = HeightFieldUtils::getHeightAtNormalizedLocation(
                 _heightField.get(), x, y, interpolation );

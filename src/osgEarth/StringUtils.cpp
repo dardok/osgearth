@@ -1,6 +1,6 @@
 /* -*-c++-*- */
 /* osgEarth - Dynamic map generation toolkit for OpenSceneGraph
- * Copyright 2015 Pelican Mapping
+ * Copyright 2016 Pelican Mapping
  * http://osgearth.org
  *
  * osgEarth is free software; you can redistribute it and/or modify
@@ -208,6 +208,12 @@ osgEarth::hashString( const std::string& input )
     h ^= h >> 15;
 
     return h;
+}
+
+std::string
+osgEarth::hashToString(const std::string& input)
+{
+    return Stringify() << std::hex << std::setw(8) << std::setfill('0') << hashString(input);
 }
 
 
