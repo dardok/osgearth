@@ -122,9 +122,8 @@ namespace
     // TODO: a way to clear out this list when drawables go away
     struct DrawableInfo
     {
-        DrawableInfo() : _lastAlpha(1.0), _lastScale(1.0), _lastXY(-1.0, -1.0) { }
+        DrawableInfo() : _lastAlpha(1.0f), _lastScale(1.0f) { }
         float _lastAlpha, _lastScale;
-        osg::Vec2d _lastXY;
     };
 
     typedef std::map<const osg::Drawable*, DrawableInfo> DrawableMemory;
@@ -147,6 +146,7 @@ namespace
         // time stamp of the previous pass, for calculating animation speed
         osg::Timer_t _lastTimeStamp;
         bool _firstFrame;
+        osg::Matrix _lastCamVPW;
     };
 
     static bool s_declutteringEnabledGlobally = true;
@@ -170,6 +170,7 @@ ScreenSpaceLayoutOptions::fromConfig( const Config& conf )
     conf.getIfSet( "in_animation_time",   _inAnimTime );
     conf.getIfSet( "out_animation_time",  _outAnimTime );
     conf.getIfSet( "sort_by_priority",    _sortByPriority );
+    conf.getIfSet( "sort_by_distance",    _sortByDistance);
     conf.getIfSet( "snap_to_pixel",       _snapToPixel );
     conf.getIfSet( "max_objects",         _maxObjects );
     conf.getIfSet( "render_order",        _renderBinNumber );
@@ -184,6 +185,7 @@ ScreenSpaceLayoutOptions::getConfig() const
     conf.addIfSet( "in_animation_time",   _inAnimTime );
     conf.addIfSet( "out_animation_time",  _outAnimTime );
     conf.addIfSet( "sort_by_priority",    _sortByPriority );
+    conf.addIfSet( "sort_by_distance",    _sortByDistance);
     conf.addIfSet( "snap_to_pixel",       _snapToPixel );
     conf.addIfSet( "max_objects",         _maxObjects );
     conf.addIfSet( "render_order",        _renderBinNumber );
@@ -231,19 +233,21 @@ struct /*internal*/ DeclutterSort : public osgUtil::RenderBin::SortCallback
     // Sorts the bin. This runs in the CULL thread after the CULL traversal has completed.
     void sortImplementation(osgUtil::RenderBin* bin)
     {
+        const ScreenSpaceLayoutOptions& options = _context->_options;
+
         osgUtil::RenderBin::RenderLeafList& leaves = bin->getRenderLeafList();
+        
+        bin->copyLeavesFromStateGraphListToRenderLeafList();
 
         // first, sort the leaves:
         if ( _customSortFunctor && s_declutteringEnabledGlobally )
         {
             // if there's a custom sorting function installed
-            bin->copyLeavesFromStateGraphListToRenderLeafList();
             std::sort( leaves.begin(), leaves.end(), SortContainer( *_customSortFunctor ) );
         }
-        else
+        else if (options.sortByDistance() == true)
         {
             // default behavior:
-            bin->copyLeavesFromStateGraphListToRenderLeafList();
             std::sort( leaves.begin(), leaves.end(), SortFrontToBackPreservingGeodeTraversalOrder() );
         }
 
@@ -252,7 +256,7 @@ struct /*internal*/ DeclutterSort : public osgUtil::RenderBin::SortCallback
             return;
 
         // access the view-specific persistent data:
-        osg::Camera* cam   = bin->getStage()->getCamera();                
+        osg::Camera* cam   = bin->getStage()->getCamera();
         PerCamInfo& local = _perCam.get( cam );
 
         osg::Timer_t now = osg::Timer::instance()->tick();
@@ -300,7 +304,6 @@ struct /*internal*/ DeclutterSort : public osgUtil::RenderBin::SortCallback
         // will be culled as a group.
         std::set<const osg::Node*> culledParents;
 
-        const ScreenSpaceLayoutOptions& options = _context->_options;
         unsigned limit = *options.maxObjects();
 
         bool snapToPixel = options.snapToPixel() == true;
@@ -309,8 +312,10 @@ struct /*internal*/ DeclutterSort : public osgUtil::RenderBin::SortCallback
         camVPW.postMult(cam->getViewMatrix());
         camVPW.postMult(cam->getProjectionMatrix());
         camVPW.postMult(refWindowMatrix);
-        //if (cam->getViewport())
-        //    camVPW.postMult(cam->getViewport()->computeWindowMatrix());
+
+        // has the camera moved?
+        bool camChanged = camVPW != local._lastCamVPW;
+        local._lastCamVPW = camVPW;
 
         // Go through each leaf and test for visibility.
         // Enforce the "max objects" limit along the way.
@@ -406,23 +411,14 @@ struct /*internal*/ DeclutterSort : public osgUtil::RenderBin::SortCallback
 
             // if snapping is enabled, only snap when the camera stops moving.
             bool quantize = snapToPixel;
-            if ( quantize )
+            if ( quantize && !camChanged )
             {
-                DrawableInfo& info = local._memory[drawable];
-                
-                if ( info._lastXY.x() == winPos.x() && info._lastXY.y() == winPos.y() )
-                {
-                    // Quanitize the window draw coordinates to mitigate text rendering filtering anomalies.
-                    // Drawing text glyphs on pixel boundaries mitigates aliasing.
-                    // Adding 0.5 will cause the GPU to sample the glyph texels exactly on center.
-                    winPos.x() = floor(winPos.x()) + 0.5;
-                    winPos.y() = floor(winPos.y()) + 0.5;
-                }
-                else
-                {
-                    info._lastXY.set( winPos.x(), winPos.y() );
-                }
-            }            
+                // Quanitize the window draw coordinates to mitigate text rendering filtering anomalies.
+                // Drawing text glyphs on pixel boundaries mitigates aliasing.
+                // Adding 0.5 will cause the GPU to sample the glyph texels exactly on center.
+                winPos.x() = floor(winPos.x()) + 0.5;
+                winPos.y() = floor(winPos.y()) + 0.5;
+            }
 
             if ( s_declutteringEnabledGlobally )
             {
@@ -505,9 +501,8 @@ struct /*internal*/ DeclutterSort : public osgUtil::RenderBin::SortCallback
 
         // copy the final draw list back into the bin, rejecting any leaves whose parents
         // are in the cull list.
-
         if ( s_declutteringEnabledGlobally )
-        {
+        { 
             leaves.clear();
             for( osgUtil::RenderBin::RenderLeafList::const_iterator i=local._passed.begin(); i != local._passed.end(); ++i )
             {
@@ -656,6 +651,7 @@ namespace
 
             // render the list
             osgUtil::RenderBin::RenderLeafList& leaves = bin->getRenderLeafList();
+
             for(osgUtil::RenderBin::RenderLeafList::reverse_iterator rlitr = leaves.rbegin();
                 rlitr!= leaves.rend();
                 ++rlitr)

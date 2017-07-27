@@ -24,8 +24,10 @@ using namespace osgEarth::Drivers::RexTerrainEngine;
 #define LC "[DrawTileCommand] "
 
 void
-DrawTileCommand::draw(osg::RenderInfo& ri, DrawState& ds, osg::Referenced* layerData) const
+DrawTileCommand::draw(osg::RenderInfo& ri, DrawState& dsMaster, osg::Referenced* layerData) const
 {
+    PerContextDrawState& ds = dsMaster.getPCDS(ri.getContextID());
+
     osg::State& state = *ri.getState();
 
     //OE_INFO << LC << "      TILE: " << _geom << std::endl;
@@ -71,7 +73,7 @@ DrawTileCommand::draw(osg::RenderInfo& ri, DrawState& ds, osg::Referenced* layer
 
             if (sampler._texture.valid() && !samplerState._texture.isSetTo(sampler._texture))
             {
-                state.setActiveTextureUnit((*ds._bindings)[s].unit());
+                state.setActiveTextureUnit((*dsMaster._bindings)[s].unit());
                 sampler._texture->apply(state);
                 samplerState._texture = sampler._texture.get();
             }
@@ -103,7 +105,7 @@ DrawTileCommand::draw(osg::RenderInfo& ri, DrawState& ds, osg::Referenced* layer
 
             if (sampler._texture.valid() && !samplerState._texture.isSetTo(sampler._texture))
             {
-                state.setActiveTextureUnit((*ds._bindings)[s].unit());
+                state.setActiveTextureUnit((*dsMaster._bindings)[s].unit());
                 sampler._texture->apply(state);
                 samplerState._texture = sampler._texture.get();
             }
@@ -138,8 +140,12 @@ DrawTileCommand::draw(osg::RenderInfo& ri, DrawState& ds, osg::Referenced* layer
 
     else
     // If there's a geometry, draw it now:
-    if (_geom)
+    if (_geom.valid())
     {
+        GLenum ptype = _drawPatch ? GL_PATCHES : GL_TRIANGLES;
+
+        _geom->render(ptype, ri);
+#if 0
         // Set up the vertex arrays:
         _geom->drawVertexArraysImplementation(ri);
 
@@ -157,8 +163,21 @@ DrawTileCommand::draw(osg::RenderInfo& ri, DrawState& ds, osg::Referenced* layer
 
         else
         {
+            if (_geom->referenceCount() <= 1)
+            {
+                OE_WARN << LC << "Big trouble\n";
+                exit(-1);
+            }
+
             for (unsigned i = 0; i < _geom->getNumPrimitiveSets(); ++i)
-                _geom->getPrimitiveSet(i)->draw(*ri.getState(), true);
+            {
+                osg::PrimitiveSet* ps = _geom->getPrimitiveSet(i);
+                if (ps)
+                {
+                    ps->draw(*ri.getState(), true);
+                }
+            }
         }
+#endif
     }    
 }

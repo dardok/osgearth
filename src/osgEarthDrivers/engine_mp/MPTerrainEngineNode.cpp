@@ -172,7 +172,7 @@ _terrain( terrain )
 }
 
 void
-MPTerrainEngineNode::ElevationChangedCallback::onVisibleChanged( TerrainLayer* layer )
+MPTerrainEngineNode::ElevationChangedCallback::onVisibleChanged(VisibleLayer* layer)
 {
     _terrain->refresh(true); // true => force a dirty
 }
@@ -219,7 +219,8 @@ bool
 MPTerrainEngineNode::includeShaderLibrary(VirtualProgram* vp)
 {
     static const char* libVS =
-        "#version 330\n"
+        "#version " GLSL_VERSION_STR "\n"
+        GLSL_DEFAULT_PRECISION_FLOAT "\n"
         "#pragma vp_name MP Terrain SDK (VS)\n"
 
         "in vec4 oe_terrain_attr; \n"
@@ -260,7 +261,8 @@ MPTerrainEngineNode::includeShaderLibrary(VirtualProgram* vp)
         "} \n";
 
     static const char* libFS =
-        "#version 330\n"
+        "#version " GLSL_VERSION_STR "\n"
+        GLSL_DEFAULT_PRECISION_FLOAT "\n"
         "#pragma vp_name MP Terrain SDK (FS)\n"
 
         "uniform vec4 oe_tile_key; \n"
@@ -1006,6 +1008,12 @@ MPTerrainEngineNode::updateState()
             // terrain background color; negative means use the vertex color.
             Color terrainColor = _terrainOptions.color().getOrUse( Color(1,1,1,-1) );
             terrainStateSet->addUniform(new osg::Uniform("oe_terrain_color", terrainColor));
+
+            // shadowing?
+            if (_terrainOptions.castShadows() == true)
+            {
+                terrainStateSet->setDefine("OE_TERRAIN_CAST_SHADOWS");
+            }
 
             if ( _update_mapf )
             {

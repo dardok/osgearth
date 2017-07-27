@@ -23,7 +23,7 @@
 #include <osgEarth/MapNode>
 #include <osgEarth/NodeUtils>
 #include <osgEarth/PrimitiveIntersector>
-#include <osgEarth/DPLineSegmentIntersector>
+#include <osgUtil/LineSegmentIntersector>
 #include <osgUtil/IntersectionVisitor>
 
 #define LC "[OverlayNode] "
@@ -162,6 +162,13 @@ _getGroup ( provider )
         {
             OE_WARN << LC << "Overlay technique not available; disabled." << std::endl;
         }
+    }
+
+    // If we don't have a map node, try to find one during UPDATE
+    if (mapNode == 0L)
+    {
+        _needsMapNode = true;
+        ADJUST_UPDATE_TRAV_COUNT(this, +1);
     }
 }
 
@@ -310,6 +317,17 @@ OverlayNode::traverse( osg::NodeVisitor& nv )
                 _dirty = false;
                 ADJUST_UPDATE_TRAV_COUNT( this, -1 );
             }
+
+            if (_needsMapNode)
+            {
+                MapNode* m = osgEarth::findInNodePath<MapNode>(nv);
+                if (m)
+                {
+                    _needsMapNode = false;
+                    ADJUST_UPDATE_TRAV_COUNT(this, -1);
+                    setMapNode(m);
+                }
+            }
             
             // traverse children directly, regardles of active status
             osg::Group::traverse( nv );
@@ -335,7 +353,7 @@ OverlayNode::traverse( osg::NodeVisitor& nv )
                 osg::Vec3d worldStart = pi->getStart() * modelToWorld;
                 osg::Vec3d worldEnd = pi->getEnd() * modelToWorld;
 
-                osg::ref_ptr<DPLineSegmentIntersector> lsi = new DPLineSegmentIntersector(worldStart, worldEnd);
+                osg::ref_ptr<osgUtil::LineSegmentIntersector> lsi = new osgUtil::LineSegmentIntersector(worldStart, worldEnd);
                 osgUtil::IntersectionVisitor ivTerrain(lsi.get());
                 mapNode->getTerrainEngine()->accept(ivTerrain);
 

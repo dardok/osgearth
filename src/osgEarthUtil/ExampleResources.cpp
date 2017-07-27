@@ -41,6 +41,7 @@
 #include <osgEarthAnnotation/AnnotationRegistry>
 #include <osgEarth/ScreenSpaceLayout>
 #include <osgEarth/TerrainEngineNode>
+#include <osgEarth/NodeUtils>
 
 #include <osgEarth/XmlUtils>
 #include <osgEarth/StringUtils>
@@ -538,7 +539,7 @@ MapNodeHelper::parse(MapNode*             mapNode,
             mapNode->getMap()->beginUpdate();
             for( ImageLayerVector::iterator i = imageLayers.begin(); i != imageLayers.end(); ++i )
             {
-                mapNode->getMap()->addImageLayer( i->get() );
+                mapNode->getMap()->addLayer( i->get() );
             }
             mapNode->getMap()->endUpdate();
         }
@@ -595,7 +596,8 @@ MapNodeHelper::parse(MapNode*             mapNode,
     // Simple sky model:
     if (args.read("--sky"))
     {
-        mapNode->addExtension(Extension::create("sky_simple", ConfigOptions()) );
+        std::string ext = mapNode->getMap()->isGeocentric() ? "sky_simple" : "sky_gl";
+        mapNode->addExtension(Extension::create(ext, ConfigOptions()) );
     }
 
     // Simple ocean model:
@@ -644,12 +646,10 @@ MapNodeHelper::parse(MapNode*             mapNode,
             caster->setTextureImageUnit( unit );
             caster->setLight( view->getLight() );
             caster->getShadowCastingGroup()->addChild( mapNode->getModelLayerGroup() );
-            //caster->getShadowCastingGroup()->addChild(mapNode->getTerrainEngine());
-            //insertParent(caster, mapNode);
-            //root = findTopOfGraph(caster)->asGroup();
+            caster->getShadowCastingGroup()->addChild(mapNode->getTerrainEngine());
             if ( mapNode->getNumParents() > 0 )
             {
-                insertGroup(caster, mapNode->getParent(0));
+                osgEarth::insertGroup(caster, mapNode->getParent(0));
             }
             else
             {

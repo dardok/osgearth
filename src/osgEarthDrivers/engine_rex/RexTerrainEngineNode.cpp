@@ -106,7 +106,7 @@ namespace
             TileRenderModel& model = tileNode.renderModel();
             for (int p = 0; p < model._passes.size(); ++p)
             {
-                RenderingPass& pass = model._passes.at(p);
+                RenderingPass& pass = model._passes[p];
 
                 // if the map doesn't contain a layer with a matching UID,
                 // it's gone so remove it from the render model.
@@ -136,20 +136,6 @@ namespace
 
 //------------------------------------------------------------------------
 
-RexTerrainEngineNode::ElevationChangedCallback::ElevationChangedCallback( RexTerrainEngineNode* terrain ):
-_terrain( terrain )
-{
-    //nop
-}
-
-void
-RexTerrainEngineNode::ElevationChangedCallback::onVisibleChanged( TerrainLayer* layer )
-{
-    _terrain->refresh(true); // true => force a dirty
-}
-
-//------------------------------------------------------------------------
-
 RexTerrainEngineNode::RexTerrainEngineNode() :
 TerrainEngineNode     ( ),
 _terrain              ( 0L ),
@@ -169,7 +155,7 @@ _stateUpdateRequired  ( false )
     _requireElevationTextures = true;
 
     // install an elevation callback so we can update elevation data
-    _elevationCallback = new ElevationChangedCallback( this );
+    //_elevationCallback = new ElevationChangedCallback( this );
 
     // static shaders.
     if ( Registry::capabilities().supportsGLSL() )
@@ -243,11 +229,20 @@ RexTerrainEngineNode::setMap(const Map* map, const TerrainOptions& options)
         OE_INFO << LC << "High Res First option set to true by env var\n";
     }
 
+    // Check for normals debugging.
+    if (::getenv("OSGEARTH_DEBUG_NORMALS"))
+        getOrCreateStateSet()->setDefine("OE_DEBUG_NORMALS");
+    else
+        if (getStateSet()) getStateSet()->removeDefine("OE_DEBUG_NORMALS");
+
     // check for normal map generation (required for lighting).
     if ( _terrainOptions.normalMaps() == true )
     {
         this->_requireNormalTextures = true;
     }
+
+    // ensure we get full coverage at the first LOD.
+    this->_requireFullDataAtFirstLOD = true;
 
     // A shared registry for tile nodes in the scene graph. Enable revision tracking
     // if requested in the options. Revision tracking lets the registry notify all
@@ -488,7 +483,7 @@ RexTerrainEngineNode::dirtyTerrain()
         // Add it to the scene graph
         _terrain->addChild( tileNode );
 
-        // And load the tile's data synchronously (only for root tiles).
+        // And load the tile's data synchronously (only for root tiles)
         tileNode->loadSync();
     }
 
@@ -556,15 +551,7 @@ RexTerrainEngineNode::traverse(osg::NodeVisitor& nv)
 
         getEngineContext()->startCull( cv );
         
-        TerrainCuller culler;
-        culler.setFrameStamp(new osg::FrameStamp(*nv.getFrameStamp()));
-        culler.setDatabaseRequestHandler(nv.getDatabaseRequestHandler());
-        culler.pushReferenceViewPoint(cv->getReferenceViewPoint());
-        culler.pushViewport(cv->getViewport());
-        culler.pushProjectionMatrix(cv->getProjectionMatrix());
-        culler.pushModelViewMatrix(cv->getModelViewMatrix(), cv->getCurrentCamera()->getReferenceFrame());
-        culler._camera = cv->getCurrentCamera();
-        culler._context = this->getEngineContext();
+        TerrainCuller culler(cv, this->getEngineContext());
 
         // Prepare the culler with the set of renderable layers:
         culler.setup(_mapFrame, this->getEngineContext()->getRenderBindings());
@@ -593,10 +580,10 @@ RexTerrainEngineNode::traverse(osg::NodeVisitor& nv)
             i != culler._terrain.layers().end();
             ++i)
         {
-            lastLayer = i->get();
-
-            if (!lastLayer->_tiles.empty())
+            // Note: Cannot save lastLayer here because its _tiles may be empty, which can lead to a crash later
+            if (!i->get()->_tiles.empty())
             {
+                lastLayer = i->get();
                 lastLayer->_order = -1;
 
                 // if this is a RENDERTYPE_TILE, we need to activate the default surface state set.
@@ -617,7 +604,18 @@ RexTerrainEngineNode::traverse(osg::NodeVisitor& nv)
                 //OE_INFO << "   Apply: " << (lastLayer->_layer ? lastLayer->_layer->getName() : "-1") << "; tiles=" << lastLayer->_tiles.size() << std::endl;
                 //buf << (lastLayer->_layer ? lastLayer->_layer->getName() : "none") << " (" << lastLayer->_tiles.size() << ")\n";
 
-                cv->apply(*lastLayer);
+                if (lastLayer->_layer)
+                {
+                    if (lastLayer->_layer->preCull(cv))
+                    {
+                        cv->apply(*lastLayer);
+                        lastLayer->_layer->postCull(cv);
+                    }
+                }
+                else
+                {
+                    cv->apply(*lastLayer);
+                }
             }
 
             //buf << (lastLayer->_layer ? lastLayer->_layer->getName() : "none") << " (" << lastLayer->_tiles.size() << ")\n";
@@ -998,7 +996,7 @@ RexTerrainEngineNode::addElevationLayer( ElevationLayer* layer )
     if ( layer == 0L || layer->getEnabled() == false )
         return;
 
-    layer->addCallback( _elevationCallback.get() );
+    //layer->addCallback( _elevationCallback.get() );
 
     // only need to refresh is the elevation layer is visible.
     if (layer->getVisible())
@@ -1013,7 +1011,7 @@ RexTerrainEngineNode::removeElevationLayer( ElevationLayer* layerRemoved )
     if ( layerRemoved->getEnabled() == false )
         return;
 
-    layerRemoved->removeCallback( _elevationCallback.get() );
+    //layerRemoved->removeCallback( _elevationCallback.get() );
 
     // only need to refresh is the elevation layer is visible.
     if (layerRemoved->getVisible())
@@ -1100,6 +1098,7 @@ RexTerrainEngineNode::updateState()
 
             // Functions that affect the terrain surface only:
             package.load(surfaceVP, package.ENGINE_VERT_VIEW);
+            package.load(surfaceVP, package.ENGINE_ELEVATION_MODEL);
             package.load(surfaceVP, package.ENGINE_FRAG);
 
             // Elevation?
@@ -1132,6 +1131,12 @@ RexTerrainEngineNode::updateState()
                 }
             }
 
+            // Shadowing?
+            if (_terrainOptions.castShadows() == true)
+            {
+                surfaceStateSet->setDefine("OE_TERRAIN_CAST_SHADOWS");
+            }
+
             // assemble color filter code snippets.
             bool haveColorFilters = false;
             {
@@ -1157,7 +1162,7 @@ RexTerrainEngineNode::updateState()
 
                 for( int i=0; i<imageLayers.size(); ++i )
                 {
-                    ImageLayer* layer = imageLayers.at(i);
+                    ImageLayer* layer = imageLayers[i].get();
                     if ( layer->getEnabled() )
                     {
                         // install Color Filter function calls:

@@ -33,6 +33,8 @@
 
 #include <osgUtil/CullVisitor>
 
+#include <osg/LOD>
+
 using namespace osgEarth::Drivers::MPTerrainEngine;
 using namespace osgEarth;
 
@@ -100,7 +102,7 @@ SingleKeyNodeFactory::createTile(TileModel*        model,
     }
 #else
     // compile the model into a node:
-    TileNode* tileNode = _modelCompiler->compile(model, _frame, progress);
+    osg::ref_ptr<TileNode> tileNode = _modelCompiler->compile(model, _frame, progress);
 #endif
 
     // see if this tile might have children.

@@ -358,7 +358,8 @@ OverlayDecorator::initializePerViewData( PerViewData& pvd, osg::Camera* cam )
         params._group = _overlayGroups[i].get();
         params._terrainStateSet = pvd._sharedTerrainStateSet.get(); // share it.
         params._horizonDistance = &pvd._sharedHorizonDistance;      // share it.
-        params._terrainResources = _engine->getResources();
+        if (_engine.valid())
+            params._terrainResources = _engine->getResources();
         params._mainCamera = cam;
     }
 }
@@ -370,36 +371,33 @@ OverlayDecorator::setOverlayGraphTraversalMask( unsigned mask )
     _rttTraversalMask = mask;
 }
 
-
 void
-OverlayDecorator::onInstall( TerrainEngineNode* engine )
+OverlayDecorator::setTerrainEngine(TerrainEngineNode* engine)
 {
-    _engine = engine;
-
-    // establish the earth's major axis:
-    MapInfo info(engine->getMap());
-    _isGeocentric = info.isGeocentric();
-    _srs = info.getProfile()->getSRS();
-    _ellipsoid = info.getProfile()->getSRS()->getEllipsoid();
-
-    for(Techniques::iterator t = _techniques.begin(); t != _techniques.end(); ++t )
+    if (engine)
     {
-        t->get()->onInstall( engine );
-    }
-}
+        _engine = engine;
 
+        // establish the earth's major axis:
+        MapInfo info(engine->getMap());
+        _isGeocentric = info.isGeocentric();
+        _srs = info.getProfile()->getSRS();
+        _ellipsoid = info.getProfile()->getSRS()->getEllipsoid();
 
-void
-OverlayDecorator::onUninstall( TerrainEngineNode* engine )
-{
-    for(Techniques::iterator t = _techniques.begin(); t != _techniques.end(); ++t )
-    {
-        t->get()->onUninstall( engine );
+        for(Techniques::iterator t = _techniques.begin(); t != _techniques.end(); ++t )
+        {
+            t->get()->onInstall( engine );
+        }
     }
 
-    _engine = 0L;
+    else
+    {
+        for (Techniques::iterator t = _techniques.begin(); t != _techniques.end(); ++t)
+        {
+            t->get()->onUninstall(engine);
+        }
+    }
 }
-
 
 void
 OverlayDecorator::cullTerrainAndCalculateRTTParams(osgUtil::CullVisitor* cv,
@@ -423,7 +421,7 @@ OverlayDecorator::cullTerrainAndCalculateRTTParams(osgUtil::CullVisitor* cv,
 
     OE_TEST << LC << "------- OD CULL ------------------------" << std::endl;
 
-    if ( _isGeocentric )
+    if ( _isGeocentric && _engine.valid() )
     {
         eyeLen = eye.length();
 

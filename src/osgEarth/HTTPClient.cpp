@@ -1182,6 +1182,13 @@ HTTPClient::doGet(const HTTPRequest&    request,
             if ( r != CURLE_OK )
             {
                 OE_WARN << LC << "Proxy connect error: " << curl_easy_strerror(r) << std::endl;
+
+                // Free the headers
+                if (headers)
+                {
+                    curl_slist_free_all(headers);
+                }
+
                 return HTTPResponse(0);
             }
         }
@@ -1301,12 +1308,12 @@ HTTPClient::doGet(const HTTPRequest&    request,
                 << std::endl;
         }
 #endif
+    }
 
-        // Free the headers
-        if (headers)
-        {
-            curl_slist_free_all(headers);
-        }
+    // Free the headers
+    if (headers)
+    {
+        curl_slist_free_all(headers);
     }
 
     METRIC_END("HTTPClient::doGet", 2,

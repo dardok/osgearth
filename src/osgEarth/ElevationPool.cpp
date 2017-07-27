@@ -21,6 +21,7 @@
 #include <osgEarth/MapFrame>
 #include <osgEarth/Map>
 #include <osgEarth/Metrics>
+#include <osgEarth/Registry>
 #include <osg/Shape>
 
 using namespace osgEarth;
@@ -36,6 +37,26 @@ _maxEntries( 128u ),
 _tileSize( 257u )
 {
     //nop
+    //_opQueue = Registry::instance()->getAsyncOperationQueue();
+    if (!_opQueue.valid())
+    {
+        _opQueue = new osg::OperationQueue();
+        for (unsigned i=0; i<2; ++i)
+        {
+            osg::OperationThread* thread = new osg::OperationThread();
+            thread->setOperationQueue(_opQueue.get());
+            thread->start();
+            _opThreads.push_back(thread);
+        }
+    }
+}
+
+ElevationPool::~ElevationPool()
+{
+    _opQueue->releaseAllOperations();
+
+    for (unsigned i = 0; i<_opThreads.size(); ++i)
+        _opThreads[i]->setDone(true);
 }
 
 void
@@ -69,6 +90,33 @@ ElevationPool::setTileSize(unsigned value)
     clearImpl();
 }
 
+Future<ElevationSample>
+ElevationPool::getElevation(const GeoPoint& point, unsigned lod)
+{
+    GetElevationOp* op = new GetElevationOp(this, point, lod);
+    Future<ElevationSample> result = op->_promise.getFuture();
+    _opQueue->add(op);
+    return result;
+}
+
+ElevationPool::GetElevationOp::GetElevationOp(ElevationPool* pool, const GeoPoint& point, unsigned lod) :
+_pool(pool), _point(point), _lod(lod)
+{
+    //nop
+}
+
+void
+ElevationPool::GetElevationOp::operator()(osg::Object*)
+{
+    osg::ref_ptr<ElevationPool> pool;
+    if (!_promise.isAbandoned() && _pool.lock(pool))
+    {
+        osg::ref_ptr<ElevationEnvelope> env = pool->createEnvelope(_point.getSRS(), _lod);
+        std::pair<float, float> r = env->getElevationAndResolution(_point.x(), _point.y());
+        _promise.resolve(new ElevationSample(r.first, r.second));
+    }
+}
+
 bool
 ElevationPool::fetchTileFromMap(const TileKey& key, MapFrame& frame, Tile* tile)
 {
@@ -92,7 +140,7 @@ ElevationPool::fetchTileFromMap(const TileKey& key, MapFrame& frame, Tile* tile)
         else
         {
             OE_TEST << LC << "Populating from layers (" << keyToUse.str() << ")\n";
-            ok = _layers.populateHeightField(hf, keyToUse, 0L, INTERP_BILINEAR, 0L);
+            ok = _layers.populateHeightFieldAndNormalMap(hf, 0L, keyToUse, 0L, INTERP_BILINEAR, 0L);
         }
 
         if (ok)

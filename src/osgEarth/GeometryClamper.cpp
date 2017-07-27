@@ -39,7 +39,7 @@ _scale          ( 1.0f ),
 _offset         ( 0.0f )
 {
     this->setNodeMaskOverride( ~0 );
-    _lsi = new osgEarth::DPLineSegmentIntersector(osg::Vec3d(0,0,0), osg::Vec3d(0,0,0));
+    _lsi = new osgUtil::LineSegmentIntersector(osg::Vec3d(0,0,0), osg::Vec3d(0,0,0));
 }
 
 void
@@ -78,7 +78,7 @@ GeometryClamper::apply(osg::Drawable& drawable)
 
     unsigned count = 0;
 
-bool geomDirty = false;
+    bool geomDirty = false;
     osg::Vec3Array*  verts = static_cast<osg::Vec3Array*>(geom->getVertexArray());
     osg::FloatArray* zOffsets = 0L;
 
@@ -122,7 +122,7 @@ bool geomDirty = false;
 
                 if ( buildZOffsets )
                 {
-                    zOffsets->push_back( (*verts)[k].z() );
+                    zOffsets->push_back( hae ); //(*verts)[k].z() );
                 }
 
                 if ( _scale != 1.0 )

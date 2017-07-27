@@ -37,6 +37,7 @@ namespace
 
     const char* pickVertexEncode =
         "#version " GLSL_VERSION_STR "\n"
+        GLSL_DEFAULT_PRECISION_FLOAT "\n"
 
         "#pragma vp_entryPoint oe_pick_encodeObjectID\n"
         "#pragma vp_location   vertex_clip\n"
@@ -61,6 +62,7 @@ namespace
 
     const char* pickFragment =
         "#version " GLSL_VERSION_STR "\n"
+        GLSL_DEFAULT_PRECISION_FLOAT "\n"
 
         "#pragma vp_entryPoint oe_pick_renderEncodedObjectID\n"
         "#pragma vp_location   fragment_output\n"
@@ -113,9 +115,9 @@ RTTPicker::RTTPicker(int cameraSize)
 RTTPicker::~RTTPicker()
 {
     // remove the RTT camera from all views
-    for(int i=0; i<_pickContexts.size(); ++i)
+    for (PickContexts::iterator i = _pickContexts.begin(); i != _pickContexts.end(); ++i)
     {
-        PickContext& pc = _pickContexts[i];
+        PickContext& pc = *i;
         while( pc._pickCamera->getNumParents() > 0 )
         {
             pc._pickCamera->getParent(0)->removeChild( pc._pickCamera.get() );
@@ -142,7 +144,7 @@ RTTPicker::getOrCreateTexture(osg::View* view)
 RTTPicker::PickContext&
 RTTPicker::getOrCreatePickContext(osg::View* view)
 {
-    for(PickContextVector::iterator i = _pickContexts.begin(); i != _pickContexts.end(); ++i)
+    for(PickContexts::iterator i = _pickContexts.begin(); i != _pickContexts.end(); ++i)
     {
         if ( i->_view.get() == view )
         {
@@ -177,10 +179,14 @@ RTTPicker::getOrCreatePickContext(osg::View* view)
     // disable all the things that break ObjectID picking:
     osg::StateAttribute::GLModeValue disable = osg::StateAttribute::OFF | osg::StateAttribute::OVERRIDE | osg::StateAttribute::PROTECTED;
 
-    //rttSS->setMode(GL_BLEND,     disable );    
     rttSS->setMode(GL_LIGHTING,  disable );
     rttSS->setMode(GL_CULL_FACE, disable );
     rttSS->setMode(GL_ALPHA_TEST, disable );
+
+#if !(defined(OSG_GLES2_AVAILABLE) || defined(OSG_GLES3_AVAILABLE) || defined(OSG_GL3_AVAILABLE) )
+    rttSS->setMode(GL_POINT_SMOOTH, disable );
+    rttSS->setMode(GL_LINE_SMOOTH, disable );
+#endif
     
     // Disabling GL_BLEND is not enough, because osg::Text re-enables it
     // without regard for the OVERRIDE.
@@ -192,6 +198,7 @@ RTTPicker::getOrCreatePickContext(osg::View* view)
 
     // designate this as a pick camera
     rttSS->setDefine("OE_IS_PICK_CAMERA");
+    rttSS->setDefine("OE_LIGHTING", osg::StateAttribute::OFF | osg::StateAttribute::OVERRIDE);
 
     // default value for the objectid override uniform:
     rttSS->addUniform( new osg::Uniform(Registry::objectIndex()->getObjectIDUniformName().c_str(), 0u) );

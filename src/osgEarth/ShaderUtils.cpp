@@ -204,7 +204,7 @@ namespace
             if ( !tokens[i].empty() )
             {
                 int len = tokens[i].length();
-                if ( tokens[i].at(len-1) == ';' )
+                if ( tokens[i][len-1] == ';' )
                     buf << " " << tokens[i].substr(0, len-1); // strip semicolon
                 else
                     buf << " " << tokens[i];
@@ -261,7 +261,7 @@ namespace
 
     void applySupportForNoFFPImpl(GLSLChunker::Chunks& chunks)
     {
-#if !defined(OSG_GL_FIXED_FUNCTION_AVAILABLE)
+#if !defined(OSG_GL_FIXED_FUNCTION_AVAILABLE) && !defined(OSG_GLES3_AVAILABLE) //osg state convertVertexShaderSourceToOsgBuiltIns inserts these and the double declaration is causing an error in gles
 
         // for geometry and tessellation shaders, replace the built-ins with 
         // osg uniform aliases.
@@ -604,7 +604,8 @@ DiscardAlphaFragments::install(osg::StateSet* ss, float minAlpha) const
         if ( vp )
         {
             std::string code = Stringify()
-                << "#version " GLSL_VERSION_STR "\n"
+                << "#version " << GLSL_VERSION_STR << "\n"
+                << GLSL_DEFAULT_PRECISION_FLOAT << "\n"
                 << "void oe_discardalpha_frag(inout vec4 color) { \n"
                 << "    if ( color.a < " << std::setprecision(1) << minAlpha << ") discard;\n"
                 << "} \n";

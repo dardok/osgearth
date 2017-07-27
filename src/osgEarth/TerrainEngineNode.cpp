@@ -20,7 +20,7 @@
 #include <osgEarth/Capabilities>
 #include <osgEarth/CullingUtils>
 #include <osgEarth/Registry>
-#include <osgEarth/TextureCompositor>
+#include <osgEarth/TerrainResources>
 #include <osgEarth/NodeUtils>
 #include <osgEarth/MapModelChange>
 #include <osgEarth/TerrainTileModelFactory>
@@ -99,7 +99,7 @@ TerrainEngineNode::removeEffect(TerrainEffect* effect)
 }
 
 
-TextureCompositor*
+TerrainResources*
 TerrainEngineNode::getResources() const
 {
     return _textureResourceTracker.get();
@@ -122,7 +122,8 @@ _dirtyCount              ( 0 ),
 _requireElevationTextures( false ),
 _requireNormalTextures   ( false ),
 _requireParentTextures   ( false ),
-_elevationBorderRequired ( false ),
+_requireElevationBorder  ( false ),
+_requireFullDataAtFirstLOD( false ),
 _redrawRequired          ( true )
 {
     // register for event traversals so we can properly reset the dirtyCount
@@ -210,7 +211,7 @@ TerrainEngineNode::setMap(const Map* map, const TerrainOptions& options)
         this->setEllipsoidModel( NULL );
     
     // Install an object to manage texture image unit usage:
-    _textureResourceTracker = new TextureCompositor();
+    _textureResourceTracker = new TerrainResources();
     std::set<int> offLimits = osgEarth::Registry::instance()->getOffLimitsTextureImageUnits();
     for(std::set<int>::const_iterator i = offLimits.begin(); i != offLimits.end(); ++i)
         _textureResourceTracker->setTextureImageUnitOffLimits( *i );
@@ -458,7 +459,9 @@ TerrainEngineNodeFactory::create(const TerrainOptions& options )
 {
     TerrainEngineNode* result = 0L;
 
-    std::string driver = options.getDriver();
+    std::string driver =
+        Registry::instance()->overrideTerrainEngineDriverName().getOrUse(options.getDriver());
+
     if ( driver.empty() )
         driver = Registry::instance()->getDefaultTerrainEngineDriverName();
 
@@ -470,18 +473,5 @@ TerrainEngineNodeFactory::create(const TerrainOptions& options )
     }
 
     return result;
-}
-
-//------------------------------------------------------------------------
-TerrainDecorator::~TerrainDecorator()
-{
-}
-
-void TerrainDecorator::onInstall( TerrainEngineNode* engine )
-{
-}
-
-void TerrainDecorator::onUninstall( TerrainEngineNode* engine )
-{
 }
 

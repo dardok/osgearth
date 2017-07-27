@@ -20,7 +20,7 @@
 #define OSGEARTH_DRIVERS_MP_TERRAIN_ENGINE_ENGINE_NODE_H 1
 
 #include <osgEarth/TerrainEngineNode>
-#include <osgEarth/TextureCompositor>
+#include <osgEarth/TerrainResources>
 #include <osgEarth/Map>
 #include <osgEarth/Revisioning>
 #include <osgEarth/ThreadingUtils>
@@ -99,12 +99,12 @@ namespace osgEarth { namespace Drivers { namespace MPTerrainEngine
         static void getEngineByUID( UID uid, osg::ref_ptr<MPTerrainEngineNode>& output );
 
     public:
-        class ElevationChangedCallback : public ElevationLayerCallback
+        class ElevationChangedCallback : public VisibleLayerCallback
         {
         public:
             ElevationChangedCallback( MPTerrainEngineNode* terrain );
 
-           virtual void onVisibleChanged( TerrainLayer* layer );
+            void onVisibleChanged(VisibleLayer* layer);
 
             MPTerrainEngineNode* _terrain;
             friend class MPTerrainEngineNode;

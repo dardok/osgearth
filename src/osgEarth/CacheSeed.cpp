@@ -23,6 +23,9 @@
 #include <osgEarth/CacheSeed>
 #include <osgEarth/CacheEstimator>
 #include <osgEarth/MapFrame>
+#include <osgEarth/Map>
+#include <osgEarth/ImageLayer>
+#include <osgEarth/ElevationLayer>
 #include <OpenThreads/ScopedLock>
 #include <limits.h>
 
@@ -31,7 +34,7 @@
 using namespace osgEarth;
 using namespace OpenThreads;
 
-CacheTileHandler::CacheTileHandler( TerrainLayer* layer, Map* map ):
+CacheTileHandler::CacheTileHandler( TerrainLayer* layer, const Map* map ):
 _layer( layer ),
 _map( map )
 {
@@ -53,7 +56,7 @@ bool CacheTileHandler::handleTile(const TileKey& key, const TileVisitor& tv)
     }
     else if (elevationLayer )
     {
-        GeoHeightField hf = elevationLayer->createHeightField( key );
+        GeoHeightField hf = elevationLayer->createHeightField(key, 0L);
         if (hf.valid())
         {                
             return true;
@@ -62,7 +65,7 @@ bool CacheTileHandler::handleTile(const TileKey& key, const TileVisitor& tv)
 
     // If we didn't produce a result but the key isn't within range then we should continue to 
     // traverse the children b/c a min level was set.
-    if (!_layer->isKeyInRange(key))
+    if (!_layer->isKeyInLegalRange(key))
     {
         return true;
     }
@@ -72,12 +75,7 @@ bool CacheTileHandler::handleTile(const TileKey& key, const TileVisitor& tv)
 
 bool CacheTileHandler::hasData( const TileKey& key ) const
 {
-    TileSource* ts = _layer->getTileSource();
-    if (ts)
-    {
-        return ts->hasData(key);
-    }
-    return true;
+    return _layer->mayHaveData(key);
 }
 
 std::string CacheTileHandler::getProcessString() const
@@ -121,7 +119,7 @@ void CacheSeed::setVisitor(TileVisitor* visitor)
     _visitor = visitor;
 }
 
-void CacheSeed::run( TerrainLayer* layer, Map* map )
+void CacheSeed::run( TerrainLayer* layer, const Map* map )
 {
     _visitor->setTileHandler( new CacheTileHandler( layer, map ) );
     _visitor->run( map->getProfile() );

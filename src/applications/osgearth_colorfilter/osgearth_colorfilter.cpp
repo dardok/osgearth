@@ -22,6 +22,7 @@
 
 #include <osgViewer/Viewer>
 #include <osgEarth/MapNode>
+#include <osgEarth/ImageLayer>
 #include <osgEarthUtil/ExampleResources>
 #include <osgEarthUtil/EarthManipulator>
 #include <osgEarthUtil/Controls>
@@ -711,7 +712,7 @@ main(int argc, char** argv)
         // attach color filter to each layer.
         for (unsigned i = 0; i<imageLayers.size(); ++i)
         {
-            ImageLayer* layer = imageLayers.at( i );
+            ImageLayer* layer = imageLayers[i].get();
 
             if ( layer->getEnabled() && layer->getVisible() )
             {

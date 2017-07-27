@@ -27,6 +27,7 @@
 #include <osgEarthFeatures/GeometryUtils>
 #include <osgEarth/GeometryClamper>
 #include <osgEarth/Utils>
+#include <osgEarth/NodeUtils>
 
 #define LC "[GeometryNode] "
 
@@ -37,14 +38,16 @@ using namespace osgEarth::Features;
 
 LocalGeometryNode::LocalGeometryNode() :
 GeoPositionNode(),
-_clampRelative(false)
+_clampRelative(false),
+_clampDirty(false)
 {
     //nop - unused
 }
 
 LocalGeometryNode::LocalGeometryNode(MapNode* mapNode) :
 GeoPositionNode(),
-_clampRelative(false)
+_clampRelative(false),
+_clampDirty(false)
 {
     LocalGeometryNode::setMapNode( mapNode );
     init( 0L );
@@ -56,7 +59,8 @@ LocalGeometryNode::LocalGeometryNode(MapNode*     mapNode,
 GeoPositionNode(),
 _geom    ( geom ),
 _style   ( style ),
-_clampRelative(false)
+_clampRelative(false),
+_clampDirty(false)
 {
     LocalGeometryNode::setMapNode( mapNode );
     init( 0L );
@@ -69,10 +73,18 @@ LocalGeometryNode::LocalGeometryNode(MapNode*     mapNode,
 GeoPositionNode(),
 _node    ( node ),
 _style   ( style ),
-_clampRelative(false)
+_clampRelative(false),
+_clampDirty(false)
 {
     LocalGeometryNode::setMapNode( mapNode );
     init( 0L );
+}
+
+void
+LocalGeometryNode::setLocalOffset(const osg::Vec3f& pos)
+{
+    GeoPositionNode::setLocalOffset(pos);
+    dirty();
 }
 
 void
@@ -213,6 +225,7 @@ LocalGeometryNode::applyAltitudeSymbology(const Style& style)
                 }
             }
         }
+        dirty();
     }
 }
 
@@ -221,6 +234,10 @@ LocalGeometryNode::onTileAdded(const TileKey&          key,
                                osg::Node*              graph, 
                                TerrainCallbackContext& context)
 {
+    // If we are already set to clamp, ignore this
+    if (_clampDirty)
+        return;
+
     bool needsClamp;
 
     // This was faster, but less precise and resulted in a lot of unnecessary clamp attempts:
@@ -241,8 +258,11 @@ LocalGeometryNode::onTileAdded(const TileKey&          key,
     }
 
     if (needsClamp)
-    {    
-        clamp(graph, context.getTerrain());
+    {
+        //clamp(graph, context.getTerrain());
+        _clampDirty = true;
+        ADJUST_UPDATE_TRAV_COUNT(this, +1);
+        OE_DEBUG << LC << "LGN: clamp requested b/c of key " << key.str() << std::endl;
     }
 }
 
@@ -256,10 +276,27 @@ LocalGeometryNode::clamp(osg::Node* graph, const Terrain* terrain)
         clamper.setTerrainPatch( graph );
         clamper.setTerrainSRS( terrain ? terrain->getSRS() : 0L );
         clamper.setPreserveZ( _clampRelative );
-        clamper.setOffset( getPosition().alt() );
+        //clamper.setOffset( getPosition().alt() );
 
         this->accept( clamper );
+
+        OE_DEBUG << LC << "LGN: clamped.\n";
     }
+}
+
+void
+LocalGeometryNode::traverse(osg::NodeVisitor& nv)
+{
+    if (nv.getVisitorType() == nv.UPDATE_VISITOR && _clampDirty)
+    {
+        osg::ref_ptr<Terrain> terrain = getGeoTransform()->getTerrain();
+        if (terrain.valid())
+            clamp(terrain->getGraph(), terrain.get());
+
+        ADJUST_UPDATE_TRAV_COUNT(this, -1);
+        _clampDirty = false;
+    }
+    GeoPositionNode::traverse(nv);
 }
 
 #if 0
@@ -332,7 +369,8 @@ LocalGeometryNode::LocalGeometryNode(MapNode*              mapNode,
                                      const Config&         conf,
                                      const osgDB::Options* dbOptions) :
 GeoPositionNode( mapNode, conf ),
-_clampRelative(false)
+_clampRelative(false),
+_clampDirty(false)
 {
     if ( conf.hasChild("geometry") )
     {

@@ -30,6 +30,7 @@
 #include <osgEarth/Common>
 #include <osgEarth/Map>
 #include <osgEarth/MapNode>
+#include <osgEarth/ImageLayer>
 #include <osgEarth/Registry>
 #include <osgEarth/StringUtils>
 #include <osgEarth/FileUtils>
@@ -174,7 +175,7 @@ int TMSExporter::exportTMS(MapNode* mapNode, const std::string& earthFilePath, c
         {
             break;
         }
-        osg::ref_ptr< ImageLayer > layer = imageLayers.at(i);      
+        osg::ref_ptr< ImageLayer > layer = imageLayers[i].get();
         std::stringstream buf;
         buf << "Packaging " << layer->getName() << " (" << layerNum << " of " << totalLayers << ")";
         OE_NOTICE << buf.str() << std::endl;
@@ -192,10 +193,10 @@ int TMSExporter::exportTMS(MapNode* mapNode, const std::string& earthFilePath, c
                 outEarthFile );
 
             ImageLayerOptions layerOptions( packager.getLayerName(), tms );
-            layerOptions.mergeConfig( layer->getImageLayerOptions().getConfig( true ) );
+            layerOptions.mergeConfig( layer->options().getConfig() );
             layerOptions.cachePolicy() = CachePolicy::NO_CACHE;
 
-            outMap->addImageLayer( new ImageLayer( layerOptions ) );
+            outMap->addLayer( new ImageLayer( layerOptions ) );
         }
         layerNum++;
     }
@@ -209,7 +210,7 @@ int TMSExporter::exportTMS(MapNode* mapNode, const std::string& earthFilePath, c
             break;
         }
 
-        osg::ref_ptr< ElevationLayer > layer = elevationLayers.at(i);      
+        osg::ref_ptr< ElevationLayer > layer = elevationLayers[i].get();
         std::stringstream buf;
         buf << "Packaging " << layer->getName() << " (" << layerNum << " of " << totalLayers << ")";
         OE_NOTICE << buf.str() << std::endl;
@@ -228,10 +229,10 @@ int TMSExporter::exportTMS(MapNode* mapNode, const std::string& earthFilePath, c
                 outEarthFile );
 
             ElevationLayerOptions layerOptions( packager.getLayerName(), tms );
-            layerOptions.mergeConfig( layer->getElevationLayerOptions().getConfig( true ) );
+            layerOptions.mergeConfig( layer->options().getConfig() );
             layerOptions.cachePolicy() = CachePolicy::NO_CACHE;
 
-            outMap->addElevationLayer( new ElevationLayer( layerOptions ) );
+            outMap->addLayer( new ElevationLayer( layerOptions ) );
         }
 
         layerNum++;

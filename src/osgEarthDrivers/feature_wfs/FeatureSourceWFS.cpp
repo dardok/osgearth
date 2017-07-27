@@ -20,6 +20,7 @@
 
 #include <osgEarth/Registry>
 #include <osgEarth/FileUtils>
+#include <osgEarth/URI>
 #include <osgEarthFeatures/FeatureSource>
 #include <osgEarthFeatures/Filter>
 #include <osgEarthFeatures/BufferFilter>
@@ -34,7 +35,6 @@
 #include <stdlib.h>
 
 #include <ogr_api.h>
-
 
 
 //#undef  OE_DEBUG
@@ -241,7 +241,7 @@ public:
         {
             return ".xml";
         }        
-		else if (isJSON(mime))
+        else if (isJSON(mime))
         {
             return ".json";
         }        
@@ -268,15 +268,22 @@ public:
 
     std::string createURL(const Symbology::Query& query)
     {
+        char sep = _options.url()->full().find_first_of('?') == std::string::npos? '?' : '&';
+
         std::stringstream buf;
-        buf << _options.url()->full() << "?SERVICE=WFS&VERSION=1.0.0&REQUEST=GetFeature";
+        buf << _options.url()->full() << sep << "SERVICE=WFS&VERSION=1.0.0&REQUEST=GetFeature";
         buf << "&TYPENAME=" << _options.typeName().get();
         
         std::string outputFormat = "geojson";
         if (_options.outputFormat().isSet()) outputFormat = _options.outputFormat().get();
         buf << "&OUTPUTFORMAT=" << outputFormat;
 
-        if (_options.maxFeatures().isSet())
+        // If the Query limit is set, use that.  Otherwise use the globally defined maxFeatures setting.
+        if (query.limit().isSet())
+        {
+            buf << "&MAXFEATURES=" << query.limit().get();
+        }
+        else if (_options.maxFeatures().isSet())
         {
             buf << "&MAXFEATURES=" << _options.maxFeatures().get();
         }
@@ -298,7 +305,14 @@ public:
                    "&X=" << tileX <<
                    "&Y=" << tileY;
         }
-        else if (query.bounds().isSet())
+	// BBOX and CQL_FILTER are mutually exclusive. Give CQL_FILTER priority if specified.
+	// NOTE: CQL_FILTER is a non-standard vendor parameter. See:
+	// http://docs.geoserver.org/latest/en/user/services/wfs/vendor.html
+	else if (query.expression().isSet())
+	{
+	    buf << "&CQL_FILTER=" << osgEarth::URI::urlEncode(query.expression().get());
+	}
+	else if (query.bounds().isSet())
         {            
             double buffer = *_options.buffer();            
             buf << "&BBOX=" << std::setprecision(16)
@@ -307,6 +321,7 @@ public:
                             << query.bounds().get().xMax() + buffer << ","
                             << query.bounds().get().yMax() + buffer;
         }
+
         std::string str;
         str = buf.str();
         return str;

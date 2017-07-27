@@ -11,7 +11,7 @@ SET(HEADER_PATH ${OSGEARTH_SOURCE_DIR}/include/${LIB_NAME})
 SET(HEADERS_ROOT
     ActivityMonitorTool
     AnnotationEvents
-    AutoClipPlaneHandler    
+    AutoClipPlaneHandler
     ArcGIS
     AtlasBuilder
     Common
@@ -27,11 +27,9 @@ SET(HEADERS_ROOT
     FlatteningLayer
     Fog
     Formatter
+    FractalElevationLayer
+    GARSGraticule
     GeodeticGraticule
-    GraticuleExtension
-    GraticuleNode
-    GraticuleOptions
-    GraticuleTerrainEffect
     HTM
     LatLongFormatter
     LineOfSight
@@ -42,6 +40,7 @@ SET(HEADERS_ROOT
     MGRSFormatter
     MGRSGraticule
     MouseCoordsTool
+    MultiElevationLayer
     ObjectLocator
     Ocean
     PolyhedralLineOfSight
@@ -49,7 +48,6 @@ SET(HEADERS_ROOT
     RTTPicker
     Shaders
     Shadowing
-    SimplexNoise
     SimpleOceanLayer
     SimplePager
     Sky
@@ -63,8 +61,10 @@ SET(HEADERS_ROOT
     TMS
     TMSBackFiller
     TMSPackager
+    TopologyGraph
     UTMGraticule
     VerticalScale
+    ViewFitter
     WFS
     WMS
 )
@@ -83,7 +83,7 @@ set(TARGET_GLSL
     Graticule.vert.glsl
     Graticule.frag.glsl
     LogDepthBuffer.vert.glsl
-    LogDepthBuffer.VertOnly.vert.glsl    
+    LogDepthBuffer.VertOnly.vert.glsl
     LogDepthBuffer.frag.glsl
     Shadowing.vert.glsl
     Shadowing.frag.glsl
@@ -93,7 +93,7 @@ set(TARGET_GLSL
 set(TARGET_IN
     Shaders.cpp.in)
 
-configure_shaders(            
+configure_shaders(
     Shaders.cpp.in
     ${SHADERS_CPP}
     ${TARGET_GLSL} )
@@ -115,10 +115,9 @@ SET(SOURCES_ROOT
     FeatureQueryTool.cpp
     FlatteningLayer.cpp
     Fog.cpp
+    FractalElevationLayer.cpp
+    GARSGraticule.cpp
     GeodeticGraticule.cpp
-    GraticuleExtension.cpp
-    GraticuleTerrainEffect.cpp
-    GraticuleNode.cpp
     HTM.cpp
     LatLongFormatter.cpp
     LinearLineOfSight.cpp
@@ -128,13 +127,13 @@ SET(SOURCES_ROOT
     MGRSFormatter.cpp
     MGRSGraticule.cpp
     MouseCoordsTool.cpp
+    MultiElevationLayer.cpp
     ObjectLocator.cpp
     Ocean.cpp
     PolyhedralLineOfSight.cpp
     RadialLineOfSight.cpp
     RTTPicker.cpp
     Shadowing.cpp
-    SimplexNoise.cpp
     SimpleOceanLayer.cpp
     SimplePager.cpp
     SpatialData.cpp
@@ -147,8 +146,10 @@ SET(SOURCES_ROOT
     TMS.cpp
     TMSBackFiller.cpp
     TMSPackager.cpp
+    TopologyGraph.cpp
     UTMGraticule.cpp
     VerticalScale.cpp
+    ViewFitter.cpp
     WFS.cpp
     WMS.cpp
     ${SHADERS_CPP}
@@ -188,7 +189,7 @@ SET(LIB_PUBLIC_HEADERS
     ${HEADERS_COLORFILTER}
 )
 
-SET(LIB_COMMON_FILES 
+SET(LIB_COMMON_FILES
     ${SOURCES_ROOT} ${SOURCES_COLORFILTER}
 )
 

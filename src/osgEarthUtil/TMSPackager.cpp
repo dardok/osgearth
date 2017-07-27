@@ -23,6 +23,8 @@
 #include <osgEarth/TaskService>
 #include <osgEarth/FileUtils>
 #include <osgEarth/CacheEstimator>
+#include <osgEarth/ImageLayer>
+#include <osgEarth/ElevationLayer>
 #include <osgDB/FileUtils>
 #include <osgDB/FileNameUtils>
 #include <osgDB/WriteFile>
@@ -128,7 +130,7 @@ bool WriteTMSTileHandler::handleTile(const TileKey& key, const TileVisitor& tv)
     }
     else if (elevationLayer )
     {
-        GeoHeightField hf = elevationLayer->createHeightField( key );
+        GeoHeightField hf = elevationLayer->createHeightField(key, NULL);
         if (hf.valid())
         {
             // convert the HF to an image
@@ -152,7 +154,7 @@ bool WriteTMSTileHandler::handleTile(const TileKey& key, const TileVisitor& tv)
 
     // If we didn't produce a result but the key isn't within range then we should continue to
     // traverse the children b/c a min level was set.
-    if (!_layer->isKeyInRange(key))
+    if (!_layer->isKeyInLegalRange(key))
     {
         return true;
     }
@@ -161,12 +163,13 @@ bool WriteTMSTileHandler::handleTile(const TileKey& key, const TileVisitor& tv)
 
 bool WriteTMSTileHandler::hasData( const TileKey& key ) const
 {
-    TileSource* ts = _layer->getTileSource();
-    if (ts)
-    {
-        return ts->hasData(key);
-    }
-    return true;
+    return _layer->mayHaveData(key);
+    //TileSource* ts = _layer->getTileSource();
+    //if (ts)
+    //{
+    //    return ts->hasDataInExtent(key.getExtent());
+    //}
+    //return true;
 }
 
 std::string WriteTMSTileHandler::getProcessString() const
@@ -183,7 +186,7 @@ std::string WriteTMSTileHandler::getProcessString() const
 
         for (int i = 0; i < imageLayers.size(); i++)
         {
-            if (imageLayer == imageLayers.at(i))
+            if (imageLayer == imageLayers[i].get())
             {
                 buf << " --image " << i << " ";
                 break;
@@ -197,7 +200,7 @@ std::string WriteTMSTileHandler::getProcessString() const
 
         for (int i = 0; i < elevationLayers.size(); i++)
         {
-            if (elevationLayer == elevationLayers.at(i))
+            if (elevationLayer == elevationLayers[i].get())
             {
                 buf << " --elevation " << i << " ";
                 break;
@@ -362,7 +365,7 @@ void TMSPackager::run( TerrainLayer* layer,  Map* map  )
             // Get the index of the layer
             for (int i = 0; i < imageLayers.size(); i++)
             {
-                if (imageLayers.at(i) == imageLayer)
+                if (imageLayers[i].get() == imageLayer)
                 {
                     index = i;
                     break;
@@ -378,7 +381,7 @@ void TMSPackager::run( TerrainLayer* layer,  Map* map  )
             // Get the index of the layer
             for (int i = 0; i < elevationLayers.size(); i++)
             {
-                if (elevationLayers.at(i) == elevationLayer)
+                if (elevationLayers[i].get() == elevationLayer)
                 {
                     index = i;
                     break;
@@ -433,10 +436,10 @@ void TMSPackager::run( TerrainLayer* layer,  Map* map  )
     _visitor->run( map->getProfile() );
 }
 
-void TMSPackager::writeXML( TerrainLayer* layer, Map* map)
+void TMSPackager::writeXML(TerrainLayer* layer, Map* map)
 {
-    DataExtentList dataExtents;
-    layer->getDataExtents(dataExtents);
+    const DataExtentList& dataExtents = layer->getDataExtents();
+
      // create the tile map metadata:
     osg::ref_ptr<TMS::TileMap> tileMap = TMS::TileMap::create(
         "",

@@ -26,6 +26,8 @@
 
 #include <osgEarth/DepthOffset>
 #include <osgEarth/MapNode>
+#include <osgEarth/NodeUtils>
+#include <osgEarth/ShaderUtils>
 
 #include <osg/PolygonOffset>
 #include <osg/Depth>
@@ -51,6 +53,9 @@ _priority   ( 0.0f )
     
     _horizonCuller = new HorizonCullCallback();
     this->addCullCallback( _horizonCuller.get() );
+
+    _mapNodeRequired = true;
+    ADJUST_UPDATE_TRAV_COUNT(this, +1);
 }
 
 AnnotationNode::AnnotationNode(const Config& conf) :
@@ -65,11 +70,41 @@ _priority   ( 0.0f )
     this->addCullCallback( _horizonCuller.get() );
 
     this->setName( conf.value("name") );
+
+    _mapNodeRequired = true;
+    ADJUST_UPDATE_TRAV_COUNT(this, +1);
 }
 
 AnnotationNode::~AnnotationNode()
 {
     setMapNode( 0L );
+}
+
+void
+AnnotationNode::traverse(osg::NodeVisitor& nv)
+{
+    if (nv.getVisitorType() == nv.UPDATE_VISITOR)
+    {
+        // MapNode auto discovery.
+        if (_mapNodeRequired)
+        {
+            if (getMapNode() == 0L)
+            {
+                MapNode* mapNode = osgEarth::findInNodePath<MapNode>(nv);
+                if (mapNode)
+                {
+                    setMapNode(mapNode);
+                }
+            }
+
+            if (getMapNode() != 0L)
+            {
+                _mapNodeRequired = false;
+                ADJUST_UPDATE_TRAV_COUNT(this, -1);
+            }
+        }
+    }
+    osg::Group::traverse(nv);
 }
 
 void
@@ -192,7 +227,7 @@ AnnotationNode::applyRenderSymbology(const Style& style)
                 (render->backfaceCulling() == true? osg::StateAttribute::ON : osg::StateAttribute::OFF) | osg::StateAttribute::OVERRIDE );
         }
 
-#ifndef OSG_GLES2_AVAILABLE
+#if !( defined(OSG_GLES2_AVAILABLE) || defined(OSG_GLES3_AVAILABLE) || defined(OSG_GL3_AVAILABLE) )
         if ( render->clipPlane().isSet() )
         {
             GLenum mode = GL_CLIP_PLANE0 + render->clipPlane().value();

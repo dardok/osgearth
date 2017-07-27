@@ -19,6 +19,7 @@
 #include <osgEarth/GeoTransform>
 #include <osgEarth/Terrain>
 #include <osgEarth/MapNode>
+#include <osgEarth/NodeUtils>
 
 #define LC "[GeoTransform] "
 
@@ -29,7 +30,8 @@ using namespace osgEarth;
 GeoTransform::GeoTransform() :
 _findTerrain(false),
 _terrainCallbackInstalled(false),
-_autoRecomputeHeights(true)
+_autoRecomputeHeights(true),
+_dirtyClamp(false)
 {
    //nop
 }
@@ -42,6 +44,7 @@ osg::MatrixTransform(rhs, op)
     _autoRecomputeHeights = rhs._autoRecomputeHeights;
     _terrainCallbackInstalled = false;
     _findTerrain = false;
+    _dirtyClamp = rhs._dirtyClamp;
 }
 
 void
@@ -140,19 +143,25 @@ GeoTransform::onTileAdded(const TileKey&          key,
                           osg::Node*              node,
                           TerrainCallbackContext& context)
 {
-   if (!_position.isValid() || _position.altitudeMode() != ALTMODE_RELATIVE || !_autoRecomputeHeights)
-   {
-       OE_TEST << LC << "onTileAdded fail condition 1\n";
-       return;
-   }
+    if (!_dirtyClamp)
+    {
+       if (!_position.isValid() || _position.altitudeMode() != ALTMODE_RELATIVE || !_autoRecomputeHeights)
+       {
+           OE_TEST << LC << "onTileAdded fail condition 1\n";
+           return;
+       }
 
-   if (key.valid() && !key.getExtent().contains(_position))
-   {
-       OE_TEST << LC << "onTileAdded fail condition 2\n";
-       return;
-   }
+       if (key.valid() && !key.getExtent().contains(_position))
+       {
+           OE_TEST << LC << "onTileAdded fail condition 2\n";
+           return;
+       }
 
-   setPosition(_position);
+       _dirtyClamp = true;
+       ADJUST_UPDATE_TRAV_COUNT(this, +1);
+    }
+
+    //setPosition(_position);
 }
 
 void
@@ -168,7 +177,15 @@ GeoTransform::traverse(osg::NodeVisitor& nv)
                 _findTerrain = false;
                 ADJUST_UPDATE_TRAV_COUNT(this, -1);
                 setTerrain(mapNode->getTerrain());
+                OE_DEBUG << LC << "Discovered terrain.\n";
             }
+        }
+
+        if (_dirtyClamp)
+        {
+            setPosition(_position);
+            _dirtyClamp = false;
+            ADJUST_UPDATE_TRAV_COUNT(this, -1);
         }
     }
 

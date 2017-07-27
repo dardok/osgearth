@@ -56,7 +56,7 @@ CompositeTileSourceOptions::add( const ElevationLayerOptions& options )
 Config 
 CompositeTileSourceOptions::getConfig() const
 {    
-    Config conf = TileSourceOptions::newConfig();
+    Config conf = TileSourceOptions::getConfig();
 
     for( ComponentVector::const_iterator i = _components.begin(); i != _components.end(); ++i )
     {
@@ -155,7 +155,7 @@ CompositeTileSource::createImage(const TileKey&    key,
     {
         ImageLayer* layer = itr->get();
         ImageInfo imageInfo;
-        imageInfo.dataInExtents = layer->getTileSource()->hasDataInExtent( key.getExtent() );
+        imageInfo.dataInExtents = layer->mayHaveDataInExtent(key.getExtent()); //getTileSource()->hasDataInExtent( key.getExtent() );
         imageInfo.opacity = layer->getOpacity();
 
         if (imageInfo.dataInExtents)
@@ -294,7 +294,7 @@ osg::HeightField* CompositeTileSource::createHeightField(
             const TileKey&        key,
             ProgressCallback*     progress )
 {    
-    unsigned int size = *getOptions().tileSize();    
+    unsigned size = getPixelsPerTile(); //int size = *getOptions().tileSize();    
     bool hae = false;
     osg::ref_ptr< osg::HeightField > heightField = new osg::HeightField();
     heightField->allocate(size, size);
@@ -306,7 +306,7 @@ osg::HeightField* CompositeTileSource::createHeightField(
     }  
 
     // Populate the heightfield and return it if it's valid
-    if (_elevationLayers.populateHeightField(heightField.get(), key, 0, INTERP_BILINEAR, progress))
+    if (_elevationLayers.populateHeightFieldAndNormalMap(heightField.get(), 0L, key, 0, INTERP_BILINEAR, progress))
     {                
         return heightField.release();
     }
@@ -334,7 +334,7 @@ CompositeTileSource::add( ImageLayer* layer )
     _imageLayers.push_back( layer );
     CompositeTileSourceOptions::Component comp;
     comp._layer = layer;
-    comp._imageLayerOptions = layer->getImageLayerOptions();
+    comp._imageLayerOptions = layer->options();
     _options._components.push_back( comp );    
 
     return true;
@@ -358,7 +358,7 @@ CompositeTileSource::add( ElevationLayer* layer )
     _elevationLayers.push_back( layer );
     CompositeTileSourceOptions::Component comp;
     comp._layer = layer;
-    comp._elevationLayerOptions = layer->getElevationLayerOptions();
+    comp._elevationLayerOptions = layer->options();
     _options._components.push_back( comp );    
 
     return true;

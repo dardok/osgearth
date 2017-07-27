@@ -33,6 +33,8 @@
 #include <osgEarth/Registry>
 #include <osgEarthDrivers/feature_ogr/OGRFeatureOptions>
 #include <osgEarth/FileUtils>
+#include <osgEarth/ImageLayer>
+#include <osgEarth/ElevationLayer>
 
 #include <osgEarth/TileVisitor>
 
@@ -364,7 +366,7 @@ seed( osg::ArgumentParser& args )
         // Seed all the map layers
         for (unsigned int i = 0; i < terrainLayers.size(); ++i)
         {            
-            osg::ref_ptr< TerrainLayer > layer = terrainLayers.at(i);
+            osg::ref_ptr< TerrainLayer > layer = terrainLayers[i].get();
             OE_NOTICE << "Seeding layer" << layer->getName() << std::endl;            
             osg::Timer_t start = osg::Timer::instance()->tick();
             seeder.run(layer.get(), map);            
