@@ -699,12 +699,17 @@ ShaderGenerator::apply(osg::ProxyNode& node)
 void
 ShaderGenerator::apply(osg::ClipNode& node)
 {
+#if 0 // DEPRECATED
+
     static const char* s_clip_source =
         "#version " GLSL_VERSION_STR "\n"
         GLSL_PRECISION "\n"
-        "void oe_sg_set_clipvertex(inout vec4 vertexVIEW)\n"
+        "uniform vec4 oe_sg_clipnode_plane_model; \n"
+        "void oe_sg_clipnode(inout vec4 vertex_view)\n"
         "{\n"
-        "    gl_ClipVertex = vertexVIEW; \n"
+        "    vec4 plane_view = gl_ModelViewMatrix * oe_sg_clipnode_plane_model; \n"
+        "    gl_ClipDistance[0] = dot(plane_view, vertex_view); \n"
+        //"    gl_ClipVertex = vertexVIEW; \n"
         "}\n";
 
     if ( !_active )
@@ -716,7 +721,12 @@ ShaderGenerator::apply(osg::ClipNode& node)
     osg::StateSet* stateSet = cloneOrCreateStateSet(&node);
     VirtualProgram* vp = VirtualProgram::getOrCreate(stateSet);
     if ( vp->referenceCount() == 1 ) vp->setName( _name );
-    vp->setFunction( "oe_sg_set_clipvertex", s_clip_source, ShaderComp::LOCATION_VERTEX_VIEW, 0.95f );
+    vp->setFunction( "oe_sg_clipnode", s_clip_source, ShaderComp::LOCATION_VERTEX_VIEW, 0.95f );
+
+    osg::Uniform* plane = new osg::Uniform("oe_sg_clipnode_plane_model", osg::Uniform::FLOAT_VEC4);   
+    plane->set(osg::Vec4f(node.getClipPlane(0)->getClipPlane()));
+    stateSet->addUniform(plane);
+#endif
 
     apply( static_cast<osg::Group&>(node) );
 }
@@ -756,7 +766,7 @@ ShaderGenerator::apply(osgSim::LightPointNode& node)
             node.setStateSet(replacement.get() );
         }
         
-        disableUnsupportedAttributes(stateset);
+        disableUnsupportedAttributes(stateset.get());
         _state->popStateSet();
     }
 }
@@ -840,7 +850,7 @@ ShaderGenerator::processGeometry(const osg::StateSet*         original,
         new osg::StateSet();
 
     // likewise, create a VP that we might populate.
-    osg::ref_ptr<VirtualProgram> vp = VirtualProgram::cloneOrCreate(original, newStateSet);
+    osg::ref_ptr<VirtualProgram> vp = VirtualProgram::cloneOrCreate(original, newStateSet.get());
 
     // we'll set this to true if the new stateset goes into effect and
     // needs to be returned.

@@ -91,7 +91,7 @@ namespace osgEarth
 
     protected:
 
-        virtual void addImageLayers(
+        virtual void addColorLayers(
             TerrainTileModel*                model,
             const MapFrame&                  frame,
             const TerrainEngineRequirements* reqs,

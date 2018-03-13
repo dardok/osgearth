@@ -35,7 +35,8 @@ _clipPlane(rhs._clipPlane),
 _minAlpha(rhs._minAlpha),
 _renderBin(rhs._renderBin),
 _transparent(rhs._transparent),
-_decal(rhs._decal)
+_decal(rhs._decal),
+_maxCreaseAngle(rhs._maxCreaseAngle)
 {
 }
 
@@ -48,7 +49,8 @@ _order          ( 0 ),
 _clipPlane      ( 0 ),
 _minAlpha       ( 0.0f ),
 _transparent    ( false ),
-_decal          ( false )
+_decal          ( false ),
+_maxCreaseAngle ( 0.0 )
 {
     mergeConfig(conf);
 }
@@ -68,6 +70,7 @@ RenderSymbol::getConfig() const
     conf.addIfSet   ( "render_bin",       _renderBin );
     conf.addIfSet   ( "transparent",      _transparent );
     conf.addIfSet   ( "decal",            _decal);
+    conf.addIfSet   ("max_crease_angle",  _maxCreaseAngle);
     return conf;
 }
 
@@ -84,6 +87,7 @@ RenderSymbol::mergeConfig( const Config& conf )
     conf.getIfSet   ( "render_bin",       _renderBin );
     conf.getIfSet   ( "transparent",      _transparent );
     conf.getIfSet   ( "decal",            _decal);
+    conf.getIfSet   ("max_crease_angle",  _maxCreaseAngle);
 }
 
 void
@@ -101,17 +105,25 @@ RenderSymbol::parseSLD(const Config& c, Style& style)
         style.getOrCreate<RenderSymbol>()->depthOffset()->enabled() = as<bool>(c.value(), *defaults.depthOffset()->enabled() );
     }
     else if ( match(c.key(), "render-depth-offset-min-bias") ) {
-        style.getOrCreate<RenderSymbol>()->depthOffset()->minBias() = as<float>(c.value(), *defaults.depthOffset()->minBias() );
+        float value; Units units;
+        if (Units::parse(c.value(), value, units, Units::METERS))
+            style.getOrCreate<RenderSymbol>()->depthOffset()->minBias() = Distance(value, units);
         style.getOrCreate<RenderSymbol>()->depthOffset()->automatic() = false;
     }
     else if ( match(c.key(), "render-depth-offset-max-bias") ) {
-        style.getOrCreate<RenderSymbol>()->depthOffset()->maxBias() = as<float>(c.value(), *defaults.depthOffset()->maxBias() );
+        float value; Units units;
+        if (Units::parse(c.value(), value, units, Units::METERS))
+            style.getOrCreate<RenderSymbol>()->depthOffset()->maxBias() = Distance(value, units);
     }
     else if ( match(c.key(), "render-depth-offset-min-range") ) {
-        style.getOrCreate<RenderSymbol>()->depthOffset()->minRange() = as<float>(c.value(), *defaults.depthOffset()->minRange() );
+        float value; Units units;
+        if (Units::parse(c.value(), value, units, Units::METERS))
+            style.getOrCreate<RenderSymbol>()->depthOffset()->minRange() = Distance(value, units);
     }
     else if ( match(c.key(), "render-depth-offset-max-range") ) {
-        style.getOrCreate<RenderSymbol>()->depthOffset()->maxRange() = as<float>(c.value(), *defaults.depthOffset()->maxRange() );
+        float value; Units units;
+        if (Units::parse(c.value(), value, units, Units::METERS))
+            style.getOrCreate<RenderSymbol>()->depthOffset()->maxRange() = Distance(value, units);
     }
     else if ( match(c.key(), "render-depth-offset-auto") ) {
         style.getOrCreate<RenderSymbol>()->depthOffset()->automatic() = as<bool>(c.value(), *defaults.depthOffset()->automatic() );
@@ -136,5 +148,10 @@ RenderSymbol::parseSLD(const Config& c, Style& style)
     }
     else if (match(c.key(), "render-decal")) {
         style.getOrCreate<RenderSymbol>()->decal() = as<bool>(c.value(), *defaults.decal());
+    }
+    else if (match(c.key(), "render-max-crease-angle")) {
+        float value; Units units;
+        if (Units::parse(c.value(), value, units, Units::METERS))
+            style.getOrCreate<RenderSymbol>()->maxCreaseAngle() = Angle(value, units);
     }
 }

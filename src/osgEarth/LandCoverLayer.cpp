@@ -22,6 +22,8 @@
 #include <osgEarth/Map>
 #include <osgEarth/MetaTile>
 #include <osgEarth/SimplexNoise>
+#include <osgEarth/ThreadingUtils>
+#include <osgEarth/Progress>
 
 using namespace osgEarth;
 
@@ -88,18 +90,27 @@ namespace
         float     warp;
         ImageUtils::PixelReader* read;
         unsigned* codeTable;
+        unsigned loads;
 
-        ILayer() : valid(true), read(0L), scale(1.0f), warp(0.0f) { }
+        ILayer() : valid(true), read(0L), scale(1.0f), warp(0.0f), loads(0) { }
 
         ~ILayer() { if (read) delete read; }
 
         void load(const TileKey& key, LandCoverCoverageLayer* sourceLayer, ProgressCallback* progress)
         {
-            if ( sourceLayer->getEnabled() && sourceLayer->getVisible() && sourceLayer->isKeyInLegalRange(key) )
+            if (sourceLayer->getEnabled() && 
+                sourceLayer->isKeyInLegalRange(key) &&
+                sourceLayer->mayHaveDataInExtent(key.getExtent()))
             {
                 for(TileKey k = key; k.valid() && !image.valid(); k = k.createParentKey())
                 {
                     image = sourceLayer->createImage(k, progress);
+
+                    // check for cancelation:
+                    if (progress && progress->isCanceled())
+                    {
+                        break;
+                    }
                 } 
             }
 
@@ -207,7 +218,9 @@ namespace
         TileSource(options),
         _options(&options)
     {
-        //nop
+        // Increase the L2 cache size since the parent LandCoverLayer is going to be
+        // using meta-tiling to create mosaics for warping
+        setDefaultL2CacheSize(64);
     }
 
     Status
@@ -280,8 +293,8 @@ namespace
         std::vector<ILayer> layers(_coverages.size());
 
         // Allocate the new coverage image; it will contain unnormalized values.
-        osg::Image* out = new osg::Image();
-        ImageUtils::markAsUnNormalized(out, true);
+        osg::ref_ptr<osg::Image> out = new osg::Image();
+        ImageUtils::markAsUnNormalized(out.get(), true);
 
         // Allocate a suitable format:
         GLint internalFormat = GL_LUMINANCE32F_ARB;
@@ -293,7 +306,7 @@ namespace
 
         osg::Vec2 cov;    // coverage coordinates
 
-        ImageUtils::PixelWriter write( out );
+        ImageUtils::PixelWriter write( out.get() );
 
         float du = 1.0f / (float)(out->s()-1);
         float dv = 1.0f / (float)(out->t()-1);
@@ -304,6 +317,8 @@ namespace
         else
             nodata.set(NO_DATA_VALUE, NO_DATA_VALUE, NO_DATA_VALUE, NO_DATA_VALUE);
 
+        unsigned pixelsWritten = 0u;
+
         for(float u=0.0f; u<=1.0f; u+=du)
         {
             for(float v=0.0f; v<=1.0f; v+=dv)
@@ -311,14 +326,17 @@ namespace
                 bool wrotePixel = false;
                 for(int L = layers.size()-1; L >= 0 && !wrotePixel; --L)
                 {
+                    if (progress && progress->isCanceled())
+                        return 0L;
+
                     ILayer& layer = layers[L];
                     if ( !layer.valid )
                         continue;
 
                     if ( !layer.image.valid() )
-                        layer.load(key, _coverages[L], progress);
+                        layer.load(key, _coverages[L].get(), progress);
 
-                    if ( !layer.valid )
+                    if (!layer.valid)
                         continue;
 
                     osg::Vec2 cov(layer.scale*u + layer.bias.x(), layer.scale*v + layer.bias.y());
@@ -326,9 +344,14 @@ namespace
                     if ( cov.x() >= 0.0f && cov.x() <= 1.0f && cov.y() >= 0.0f && cov.y() <= 1.0f )
                     {
                         osg::Vec4 texel = (*layer.read)(cov.x(), cov.y());
+
                         if ( texel.r() != NO_DATA_VALUE )
                         {
+                            // store the warp factor in the green channel
                             texel.g() = layer.warp;
+
+                            // store the layer index in the blue channel
+                            texel.b() = (float)L;
 
                             if (texel.r() < 1.0f)
                             {
@@ -342,6 +365,7 @@ namespace
                                         texel.r() = (float)value;
                                         write.f(texel, u, v);
                                         wrotePixel = true;
+                                        pixelsWritten++;
                                     }
                                 }
                             }
@@ -354,6 +378,7 @@ namespace
                                     texel.r() = (float)_codemaps[L][code];
                                     write.f(texel, u, v);
                                     wrotePixel = true;
+                                    pixelsWritten++;
                                 }
                             }
                         }
@@ -367,7 +392,7 @@ namespace
             }
         }
 
-        return out;
+        return pixelsWritten > 0u? out.release() : 0L;
     }
 }
 
@@ -408,14 +433,14 @@ LandCoverLayerOptions::getConfig() const
 
     if (_coverages.size() > 0)
     {
-        Config images("images");
+        Config images("coverages");
         for (std::vector<LandCoverCoverageLayerOptions>::const_iterator i = _coverages.begin();
             i != _coverages.end();
             ++i)
         {
-            images.add("image", i->getConfig());
+            images.add("coverage", i->getConfig());
         }
-        conf.add(images);
+        conf.update(images);
     }
 
     return conf;
@@ -487,23 +512,26 @@ LandCoverLayer::createImageImplementation(const TileKey& key, ProgressCallback* 
         {
             for (int y = -1; y <= 1; ++y)
             {
+                if (progress && progress->isCanceled())
+                    return GeoImage::INVALID;
+
                 // compute the neighoring key:
                 TileKey subkey = key.createNeighborKey(x, y);
-                if (!subkey.valid())
-                    continue;
-
-                // compute the closest ancestor key with actual data for the neighbor key:
-                TileKey bestkey = getBestAvailableTileKey(subkey);
-                if (!bestkey.valid())
-                    continue;
-
-                // load the image and store it to the metaimage.
-                GeoImage tile = ImageLayer::createImageImplementation(bestkey, progress);
-                if (tile.valid())
+                if (subkey.valid())
                 {
-                    osg::Matrix scaleBias;
-                    subkey.getExtent().createScaleBias(bestkey.getExtent(), scaleBias);
-                    metaImage.setImage(x, y, tile.getImage(), scaleBias);
+                    // compute the closest ancestor key with actual data for the neighbor key:
+                    TileKey bestkey = getBestAvailableTileKey(subkey);
+                    if (bestkey.valid())
+                    {
+                        // load the image and store it to the metaimage.
+                        GeoImage tile = ImageLayer::createImageImplementation(bestkey, progress);
+                        if (tile.valid())
+                        {
+                            osg::Matrix scaleBias;
+                            subkey.getExtent().createScaleBias(bestkey.getExtent(), scaleBias);
+                            metaImage.setImage(x, y, tile.getImage(), scaleBias);
+                        }
+                    }
                 }
             }
         }
@@ -541,7 +569,6 @@ LandCoverLayer::createImageImplementation(const TileKey& key, ProgressCallback* 
         osg::Vec4 nodata(NO_DATA_VALUE, NO_DATA_VALUE, NO_DATA_VALUE, NO_DATA_VALUE);
         
         float pdL = pow(2, (float)key.getLOD() - options().noiseLOD().get());
-        //float warp = options().warpFactor().get() * pow(2, dL);
 
         for (int t = 0; t < image->t(); ++t)
         {
@@ -549,10 +576,14 @@ LandCoverLayer::createImageImplementation(const TileKey& key, ProgressCallback* 
             for (int s = 0; s < image->s(); ++s)
             {
                 double u = (double)s / (double)(image->s() - 1);
+                
+                if (progress && progress->isCanceled())
+                    return GeoImage::INVALID;
 
                 cov.set(u, v);
 
-                // first read the unwarped pixel to get the warping value:
+                // first read the unwarped pixel to get the warping value.
+                // (warp is stored in pixel.g)
                 metaImage.read(cov.x(), cov.y(), pixel);
                 float warp = pixel.g() * pdL;
 
@@ -561,9 +592,20 @@ LandCoverLayer::createImageImplementation(const TileKey& key, ProgressCallback* 
                 cov = warpCoverageCoords(cov, noise, warp);
 
                 if (metaImage.read(cov.x(), cov.y(), pixel))
-                    write(pixel, s, t);
+                {
+                    // only apply the warping if the location of the warped pixel
+                    // came from the same source layer. Otherwise you will get some
+                    // unsavory speckling. (Layer index is stored in pixel.b)
+                    osg::Vec4 unwarpedPixel;
+                    if (metaImage.read(u, v, unwarpedPixel) && pixel.b() != unwarpedPixel.b())
+                        write(unwarpedPixel, s, t);
+                    else
+                        write(pixel, s, t);
+                }
                 else
+                {
                     write(nodata, s, t);
+                }
             }
         }
 

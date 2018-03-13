@@ -19,7 +19,6 @@ to extruded buildings.
     <feature_model name="buildings">
         <features name="buildings" driver="ogr">
             <url>../data/boston_buildings_utm19.shp</url>
-            <build_spatial_index>true</build_spatial_index>
 			<resample min_length="2.5"/>
         </features>
         
@@ -75,7 +74,7 @@ to extruded buildings.
     
     
     <feature_model name="Streets" feature_source="streets-data">        
-        <layout crop_features="true" tile_size_factor="7.5">
+        <layout crop_features="true" tile_size="1000">
             <level max_range="5000"/>
         </layout>        
         <styles>
@@ -93,7 +92,7 @@ to extruded buildings.
 	
 	
 	<feature_model name="streetlamps" feature_source="streets-data">
-        <layout tile_size_factor="5" crop_features="true">
+        <layout tile_size="1000" crop_features="true">
             <level max_range="1000" style="default"/>
         </layout>
         
@@ -117,11 +116,11 @@ to extruded buildings.
     
     
     <feature_model name="Parks" enabled="true">
-        <features name="parks" driver="ogr" build_spatial_index="true">
+        <features name="parks" driver="ogr">
             <url>../data/boston-parks.shp</url>
         </features>        
         
-        <layout tile_size_factor="3">
+        <layout tile_size="1000">
             <level max_range="2000"/>
         </layout>
         
@@ -154,7 +153,6 @@ to extruded buildings.
   
     
     <feature_source name="streets-data" driver="ogr">
-        <build_spatial_index>true</build_spatial_index>
         <url>../data/boston-scl-utm19n-meters.shp</url>
         <filters>
             <resample min_length="25" max_length="25"/>

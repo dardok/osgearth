@@ -234,7 +234,7 @@ ImageUtils::resizeImage(const osg::Image* input,
         {
             output->allocateImage( out_s, out_t, input->r(), input->getPixelFormat(), input->getDataType(), input->getPacking() );
             output->setInternalTextureFormat( input->getInternalTextureFormat() );
-            markAsNormalized(output, isNormalized(input));
+            markAsNormalized(output.get(), isNormalized(input));
         }
         else
         {
@@ -257,11 +257,6 @@ ImageUtils::resizeImage(const osg::Image* input,
     {
         PixelReader read( input );
         PixelWriter write( output.get() );
-
-        unsigned int pixel_size_bytes = input->getRowSizeInBytes() / in_s;
-
-        unsigned char* dataOffset = output->getMipmapData(mipmapLevel);
-        unsigned int   dataRowSizeBytes = output->getRowSizeInBytes() >> mipmapLevel;
 
         for( unsigned int output_row=0; output_row < out_t; output_row++ )
         {
@@ -367,9 +362,7 @@ ImageUtils::flattenImage(osg::Image*                             input,
         layer->setPixelAspectRatio(input->getPixelAspectRatio());
         markAsNormalized(layer, isNormalized(input));
 
-#if OSG_MIN_VERSION_REQUIRED(3,1,0)
         layer->setRowLength(input->getRowLength());
-#endif
         layer->setOrigin(input->getOrigin());
         layer->setFileName(input->getFileName());
         layer->setWriteHint(input->getWriteHint());
@@ -629,8 +622,8 @@ ImageUtils::buildNearestNeighborMipmaps(const osg::Image* input)
     for( int level=0; level<numMipmapLevels; ++level )
     {
         osg::ref_ptr<osg::Image> temp;
-        ImageUtils::resizeImage(input2, level_s, level_t, result, level, false);
-        ImageUtils::resizeImage(input2, level_s, level_t, temp, 0, false);
+        ImageUtils::resizeImage(input2.get(), level_s, level_t, result, level, false);
+        ImageUtils::resizeImage(input2.get(), level_s, level_t, temp, 0, false);
         level_s >>= 1;
         level_t >>= 1;
         input2 = temp.get();
@@ -692,6 +685,82 @@ ImageUtils::createMipmapBlendedImage( const osg::Image* primary, const osg::Imag
     }
 
     return result.release();
+}
+
+osgDB::ReaderWriter*
+ImageUtils::getReaderWriterForStream(std::istream& stream) {
+    // Modified from https://oroboro.com/image-format-magic-bytes/
+
+    // Get the length of the stream
+    stream.seekg(0, std::ios::end);
+    unsigned int len = stream.tellg();
+    stream.seekg(0, std::ios::beg);
+
+    if (len < 16) return 0;
+
+    //const char* data = input.c_str();
+    // Read a 16 byte header
+    char data[16];
+    stream.read(data, 16);
+    // Reset reading
+    stream.seekg(0, std::ios::beg);
+
+    // .jpg:  FF D8 FF
+    // .png:  89 50 4E 47 0D 0A 1A 0A
+    // .gif:  GIF87a      
+    //        GIF89a
+    // .tiff: 49 49 2A 00
+    //        4D 4D 00 2A
+    // .bmp:  BM 
+    // .webp: RIFF ???? WEBP 
+    // .ico   00 00 01 00
+    //        00 00 02 00 ( cursor files )
+    switch (data[0])
+    {
+    case '\xFF':
+        return (!strncmp((const char*)data, "\xFF\xD8\xFF", 3)) ?
+            osgDB::Registry::instance()->getReaderWriterForExtension("jpg") : 0;
+
+    case '\x89':
+        return (!strncmp((const char*)data,
+            "\x89\x50\x4E\x47\x0D\x0A\x1A\x0A", 8)) ?
+            osgDB::Registry::instance()->getReaderWriterForExtension("png") : 0;
+
+    case 'G':
+        return (!strncmp((const char*)data, "GIF87a", 6) ||
+            !strncmp((const char*)data, "GIF89a", 6)) ?
+            osgDB::Registry::instance()->getReaderWriterForExtension("gif") : 0;
+
+    case 'I':
+        return (!strncmp((const char*)data, "\x49\x49\x2A\x00", 4)) ?
+            osgDB::Registry::instance()->getReaderWriterForExtension("tif") : 0;
+
+    case 'M':
+        return (!strncmp((const char*)data, "\x4D\x4D\x00\x2A", 4)) ?
+            osgDB::Registry::instance()->getReaderWriterForExtension("tif") : 0;
+
+    case 'B':
+        return ((data[1] == 'M')) ?
+            osgDB::Registry::instance()->getReaderWriterForExtension("bmp") : 0;
+
+    default:
+        return 0;
+    }
+}
+
+osg::Image*
+ImageUtils::readStream(std::istream& stream, const osgDB::Options* options) {
+
+    osgDB::ReaderWriter* rw = getReaderWriterForStream(stream);
+    if (!rw) {
+        return 0;
+    }
+
+    osgDB::ReaderWriter::ReadResult rr = rw->readImage(stream, options);
+    if (rr.validImage()) {
+        return rr.takeImage();
+    }
+    return 0;
 }
 
 namespace
@@ -927,7 +996,6 @@ ImageUtils::upSampleNN(const osg::Image* src, int quadrant)
     int seed = *(int*)dst->data(0,0);
 
     Random rng(seed+quadrant);
-    int c = 0;
 
     for(int t=0; t<dst->t(); t+=2)
     {
@@ -1307,6 +1375,38 @@ ImageUtils::hasTransparency(const osg::Image* image, float threshold)
                     return true;
 
     return false;
+}
+
+
+void
+ImageUtils::activateMipMaps(osg::Texture* tex)
+{
+#ifdef OSGEARTH_ENABLE_NVTT_CPU_MIPMAPS
+    // Verify that this texture requests mipmaps:
+    osg::Texture::FilterMode minFilter = tex->getFilter(tex->MIN_FILTER);
+
+    bool needsMipmaps =
+        minFilter == tex->LINEAR_MIPMAP_LINEAR ||
+        minFilter == tex->LINEAR_MIPMAP_NEAREST ||
+        minFilter == tex->NEAREST_MIPMAP_LINEAR ||
+        minFilter == tex->NEAREST_MIPMAP_NEAREST;
+
+    if (needsMipmaps && tex->getNumImages() > 0)
+    {
+        // See if we have a CPU mipmap generator:
+        osgDB::ImageProcessor* ip = osgDB::Registry::instance()->getImageProcessor();
+        if (ip)
+        {
+            for (unsigned i = 0; i < tex->getNumImages(); ++i)
+            {
+                if (tex->getImage(i)->getNumMipmapLevels() <= 1)
+                {
+                    ip->generateMipMap(*tex->getImage(i), true, ip->USE_CPU);
+                }
+            }
+        }
+    }
+#endif
 }
 
 

@@ -47,9 +47,10 @@ _context(context)
 }
 
 void
-TerrainCuller::setup(const MapFrame& frame, const RenderBindings& bindings)
+TerrainCuller::setup(const MapFrame& frame, LayerExtentVector& layerExtents, const RenderBindings& bindings)
 {
     unsigned frameNum = getFrameStamp() ? getFrameStamp()->getFrameNumber() : 0u;
+    _layerExtents = &layerExtents;
     _terrain.setup(frame, bindings, frameNum, _cv);
 }
 
@@ -65,64 +66,86 @@ TerrainCuller::addDrawCommand(UID uid, const TileRenderModel* model, const Rende
 {
     SurfaceNode* surface = tileNode->getSurfaceNode();
 
-    const RenderBindings&  bindings = _context->getRenderBindings();
+    const RenderBindings& bindings = _context->getRenderBindings();
 
     // skip layers that are not visible:
-    if (pass && pass->_imageLayer.valid() && !pass->_imageLayer->getVisible())
+    if (pass && 
+        pass->visibleLayer() && 
+        pass->visibleLayer()->getVisible() == false)
+    {
+        //OE_DEBUG << LC << "Skipping " << pass->visibleLayer()->getName() << " because it's not visible." << std::endl;
         return 0L;
+    }
 
     // add a new Draw command to the appropriate layer
-    osg::ref_ptr<LayerDrawable> layer = _terrain.layer(uid);
-    if (layer.valid())
+    osg::ref_ptr<LayerDrawable> drawable = _terrain.layer(uid);
+    if (drawable.valid())
     {
-        layer->_tiles.push_back(DrawTileCommand());
-        DrawTileCommand& tile = layer->_tiles.back();
-
-        // install everything we need in the Draw Command:
-        tile._colorSamplers = pass ? &pass->_samplers : 0L;
-        tile._sharedSamplers = &model->_sharedSamplers;
-        tile._matrix = surface->getMatrix();
-        tile._modelViewMatrix = *this->getModelViewMatrix();
-        tile._keyValue = tileNode->getTileKeyValue();
-        tile._geom = surface->getDrawable()->_geom.get();
-        tile._morphConstants = tileNode->getMorphConstants();
-        tile._key = tileNode->getKey();
-
-#if 1
-        osg::Vec3 c = surface->getBound().center() * surface->getInverseMatrix();
-        tile._range = getDistanceToViewPoint(c, true);
-#else
-        osg::Vec3f eyeWorld = getViewPointLocal() * surface->getMatrix();
-        tile._range = (eyeWorld - surface->getBound().center()).length();
-#endif
-
-        const osg::Image* elevRaster = tileNode->getElevationRaster();
-        if (elevRaster)
+        // Layer marked for drawing?
+        if (drawable->_draw)
         {
-            float bias = _context->getUseTextureBorder() ? 1.5 : 0.5;
+            // Cull based on the layer extent.
+            if (drawable->_layer)
+            {
+                const LayerExtent& le = (*_layerExtents)[drawable->_layer->getUID()];
+                if (le._computed && 
+                    le._extent.isValid() &&
+                    le._extent.intersects(tileNode->getKey().getExtent()) == false)
+                {
+                    // culled out!
+                    //OE_DEBUG << LC << "Skippping " << drawable->_layer->getName() 
+                    //    << " key " << tileNode->getKey().str()
+                    //    << " because it was culled by extent." << std::endl;
+                    return 0L;
+                }
+            }
 
-            // Compute an elevation texture sampling scale/bias so we sample elevation data on center
-            // instead of on edge (as we do with color, etc.)
-            //
-            // This starts out as:
-            //   scale = (size-1)/size : this shrinks the sample area by one texel since we're sampling on center
-            //   bias = 0.5/size : this shifts the sample area over 1/2 texel to the center.
-            //
-            // But, since we also have a 1-texel border, we need to further reduce the scale by 2 texels to
-            // remove the border, and shift an extra texel over as well. Giving us this:
-            float size = (float)elevRaster->s();
-            tile._elevTexelCoeff.set((size - (2.0*bias)) / size, bias / size);
+            drawable->_tiles.push_back(DrawTileCommand());
+            DrawTileCommand* tile = &drawable->_tiles.back();
+
+            // install everything we need in the Draw Command:
+            tile->_colorSamplers = pass ? &(pass->samplers()) : 0L;
+            tile->_sharedSamplers = &model->_sharedSamplers;
+            tile->_modelViewMatrix = this->getModelViewMatrix();
+            tile->_keyValue = tileNode->getTileKeyValue();
+            tile->_geom = surface->getDrawable()->_geom.get();
+            tile->_morphConstants = tileNode->getMorphConstants();
+            tile->_key = &tileNode->getKey();
+            //tile->_order = (int)orderInTile;
+            tile->_order = drawable->_order; // layer order in map tile.
+
+            osg::Vec3 c = surface->getBound().center() * surface->getInverseMatrix();
+            tile->_range = getDistanceToViewPoint(c, true);
+
+            const osg::Image* elevRaster = tileNode->getElevationRaster();
+            if (elevRaster)
+            {
+                float bias = _context->getUseTextureBorder() ? 1.5 : 0.5;
+
+                // Compute an elevation texture sampling scale/bias so we sample elevation data on center
+                // instead of on edge (as we do with color, etc.)
+                //
+                // This starts out as:
+                //   scale = (size-1)/size : this shrinks the sample area by one texel since we're sampling on center
+                //   bias = 0.5/size : this shifts the sample area over 1/2 texel to the center.
+                //
+                // But, since we also have a 1-texel border, we need to further reduce the scale by 2 texels to
+                // remove the border, and shift an extra texel over as well. Giving us this:
+                float size = (float)elevRaster->s();
+                tile->_elevTexelCoeff.set((size - (2.0*bias)) / size, bias / size);
+            }
+
+            return tile;
         }
-
-        return &tile;
     }
     else if (pass)
     {
-        // The pass exists but it's layer doesn't - remember this so we can run
-        // a visitor to clean up the rendering models.
+        // The pass exists but it's layer is not in the render data draw list.
+        // This means that the layer is no longer in the map. Detect and record
+        // this information so we can run a cleanup visitor later on.
         ++_orphanedPassesDetected;
     }
-
+    
     return 0L;
 }
 
@@ -136,12 +159,18 @@ TerrainCuller::apply(osg::Node& node)
     if (tileNode)
     {
         _currentTileNode = tileNode;
-        _currentTileDrawCommands = 0u;
+
+        // reset the pointer to the first DrawTileCommand. We keep track of this so
+        // we can set it's "order" member to zero at the end, so the rendering engine
+        // knows to blend it with the terrain geometry color.
+        _firstTileDrawCommandForTile = 0L;
+
+        //_currentTileDrawCommands = 0u;
         
         if (!_terrain.patchLayers().empty())
         {
             // todo: check for patch/virtual
-            const RenderBindings&  bindings    = _context->getRenderBindings();
+            const RenderBindings& bindings = _context->getRenderBindings();
             TileRenderModel& renderModel = _currentTileNode->renderModel();
 
             bool pushedMatrix = false;
@@ -170,7 +199,6 @@ TerrainCuller::apply(osg::Node& node)
                     {
                         cmd->_drawPatch = true;
                         cmd->_drawCallback = layer->getDrawCallback();
-                        ++_currentTileDrawCommands;
                     }
                 }
             }
@@ -193,42 +221,51 @@ TerrainCuller::apply(osg::Node& node)
             osg::Matrix mvm = *getModelViewMatrix();
             surface->computeLocalToWorldMatrix(mvm, this);
             pushModelViewMatrix(createOrReuseMatrix(mvm), surface->getReferenceFrame());
-                        
+
+            int order = 0;
+
             // First go through any legit rendering pass data in the Tile and
             // and add a DrawCommand for each.
             for (unsigned p = 0; p < renderModel._passes.size(); ++p)
             {
                 const RenderingPass& pass = renderModel._passes[p];
-                
-                if (pass._layer.valid() && pass._layer->getRenderType() == Layer::RENDERTYPE_TILE)
+                DrawTileCommand* cmd = addDrawCommand(pass.sourceUID(), &renderModel, &pass, _currentTileNode);
+                if (cmd)
                 {
-                    if (addDrawCommand(pass._sourceUID, &renderModel, &pass, _currentTileNode))
+                    if (_firstTileDrawCommandForTile == 0L)
                     {
-                        ++_currentTileDrawCommands;
+                        _firstTileDrawCommandForTile = cmd;
+                    }
+                    else if (cmd->_order < _firstTileDrawCommandForTile->_order)
+                    {
+                        //_firstTileDrawCommandForTile->_order = 1;
+                        _firstTileDrawCommandForTile = cmd;
                     }
                 }
             }
 
-            // Next, add a DrawCommand for each tile layer not represented in the TerrainTileModel
-            // as a rendering pass.
-            for (LayerVector::const_iterator i = _terrain.tileLayers().begin(); i != _terrain.tileLayers().end(); ++i)
+            // If the culler added no draw commands for this tile... we still need
+            // to draw something or else there will be a hole! So draw a blank tile.
+            // UID = -1 is the special UID code for a blank.
+            if (_firstTileDrawCommandForTile == 0L)
             {
-                Layer* layer = i->get();
-                if (addDrawCommand(layer->getUID(), &renderModel, 0L, _currentTileNode))
-                {
-                    ++_currentTileDrawCommands;
-                }
+                //OE_INFO << LC << "Adding blank render for tile " << _currentTileNode->getKey().str() << std::endl;
+                DrawTileCommand* cmd = addDrawCommand(-1, &renderModel, 0L, _currentTileNode);
+                if (cmd)
+                    cmd->_order = 0;
             }
 
-            // If the culler added no draw commands for this tile... do something!
-            if (_currentTileDrawCommands == 0)
+            // Set the layer order of the first draw command for this tile to zero,
+            // to support proper terrain blending.
+            if (_firstTileDrawCommandForTile)
             {
-                //OE_INFO << LC << "Adding blank render.\n";
-                addDrawCommand(-1, &renderModel, 0L, _currentTileNode);
+                _firstTileDrawCommandForTile->_order = 0;
             }
-
+                
+            // pop the matrix from the cull stack
             popModelViewMatrix();
 
+            // update our bounds
             _terrain._drawState->_bs.expandBy(surface->getBound());
             _terrain._drawState->_box.expandBy(_terrain._drawState->_bs);
         }

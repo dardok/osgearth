@@ -64,10 +64,9 @@ void Terrain::OnTileAddedOperation::operator()(osg::Object*)
 
 //---------------------------------------------------------------------------
 
-Terrain::Terrain(osg::Node* graph, const Profile* mapProfile, bool geocentric, const TerrainOptions& terrainOptions ) :
+Terrain::Terrain(osg::Node* graph, const Profile* mapProfile, const TerrainOptions& terrainOptions ) :
 _graph         ( graph ),
 _profile       ( mapProfile ),
-_geocentric    ( geocentric ),
 _terrainOptions( terrainOptions )
 {
     _updateQueue = new osg::OperationQueue();
@@ -119,9 +118,9 @@ Terrain::getHeight(osg::Node*              patch,
     osg::Vec3d start(x, y, r);
     osg::Vec3d end  (x, y, -r);
 
-    if ( isGeocentric() )
+    if ( getSRS()->isGeographic() )
     {
-        const SpatialReference* ecef = getSRS()->getECEF();
+        const SpatialReference* ecef = getSRS()->getGeocentricSRS();
         getSRS()->transform(start, ecef, start);
         getSRS()->transform(end,   ecef, end);
     }

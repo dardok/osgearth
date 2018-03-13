@@ -111,7 +111,7 @@ bool WriteTMSTileHandler::handleTile(const TileKey& key, const TileVisitor& tv)
             // convert to RGB if necessary
             if ( _packager->getExtension() == "jpg" && final->getPixelFormat() != GL_RGB )
             {
-                final = ImageUtils::convertToRGB8( final );
+                final = ImageUtils::convertToRGB8( final.get() );
             }
 
             // use the TileSource provided if set, else use writeImageFile
@@ -124,7 +124,7 @@ bool WriteTMSTileHandler::handleTile(const TileKey& key, const TileVisitor& tv)
             {
                 // attempt to create the output folder:
                 osgEarth::makeDirectoryForFile( path );
-                return osgDB::writeImageFile(*final, path, _packager->getOptions());
+                return osgDB::writeImageFile(*final.get(), path, _packager->getOptions());
             }
         }
     }
@@ -336,7 +336,7 @@ void TMSPackager::setApplyAlphaMask(bool applyAlphaMask)
 
 TileVisitor* TMSPackager::getTileVisitor() const
 {
-    return _visitor;
+    return _visitor.get();
 }
 
 void TMSPackager::setVisitor(TileVisitor* visitor)
@@ -397,28 +397,13 @@ void TMSPackager::run( TerrainLayer* layer,  Map* map  )
         setLayerName(layer->getName());
     }
 
-
-
     if (imageLayer)
     {
         int tileSize = imageLayer->getTileSize();
         _width = tileSize;
         _height = tileSize;
-
-        // Figure out the extension if we haven't already assigned one.
         if (_extension.empty())
-        {
-            // Just default to whatever the source reports as it's extension.
-            _extension = imageLayer->getTileSource()->getExtension();
-        }
-
-        if (_extension == "jpg" && _applyAlphaMask)
-        {
             _extension = "png";
-            OE_NOTICE << LC << "Extension changed to PNG since output requires an alpha channel" << std::endl;
-        }
-
-        OE_INFO << LC << "Output extension: " << _extension << std::endl;
 
     }
     else if (elevationLayer)
@@ -432,7 +417,7 @@ void TMSPackager::run( TerrainLayer* layer,  Map* map  )
 
 
     _handler = new WriteTMSTileHandler(layer, map, this);
-    _visitor->setTileHandler( _handler );
+    _visitor->setTileHandler( _handler.get() );
     _visitor->run( map->getProfile() );
 }
 

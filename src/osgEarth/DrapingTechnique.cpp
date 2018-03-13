@@ -55,7 +55,7 @@ namespace
     class DrapingCamera : public osg::Camera
     {
     public:
-        DrapingCamera() : osg::Camera(), _camera(0L)
+        DrapingCamera(DrapingManager& dm) : osg::Camera(), _dm(dm), _camera(0L)
         {
             setCullingActive( false );
         }
@@ -69,13 +69,14 @@ namespace
         }
 
         void traverse(osg::NodeVisitor& nv)
-        {            
-            DrapingCullSet& cullSet = DrapingCullSet::get(_camera);
+        {
+            DrapingCullSet& cullSet = _dm.get(_camera);
             cullSet.accept( nv );
         }
 
     protected:
         virtual ~DrapingCamera() { }
+        DrapingManager& _dm;
         const osg::Camera* _camera;
     };
 
@@ -134,9 +135,7 @@ namespace
 
     // Experimental.
     void optimizeProjectionMatrix(OverlayDecorator::TechRTTParams& params, double maxFarNearRatio)
-    {
-        LocalPerViewData& local = *static_cast<LocalPerViewData*>(params._techniqueData.get());
-        
+    {        
         // t0,t1,t2,t3 will form a polygon that tightly fits the
         // main camera's frustum. Texture near the camera will get
         // more resolution then texture far away.
@@ -380,6 +379,8 @@ namespace
 void
 DrapingTechnique::setUpCamera(OverlayDecorator::TechRTTParams& params)
 {
+    OE_INFO << LC << "Using texture size = " << _textureSize.get() << std::endl;
+
     // create the projected texture:
     osg::Texture2D* projTexture = new DrapingTexture(); 
 
@@ -395,7 +396,7 @@ DrapingTechnique::setUpCamera(OverlayDecorator::TechRTTParams& params)
     projTexture->setBorderColor( osg::Vec4(0,0,0,0) );
 
     // set up the RTT camera:
-    params._rttCamera = new DrapingCamera(); //new osg::Camera();
+    params._rttCamera = new DrapingCamera(_drapingManager);
     params._rttCamera->setClearColor( osg::Vec4f(0,0,0,0) );
     // this ref frame causes the RTT to inherit its viewpoint from above (in order to properly
     // process PagedLOD's etc. -- it doesn't affect the perspective of the RTT camera though)
@@ -434,6 +435,7 @@ DrapingTechnique::setUpCamera(OverlayDecorator::TechRTTParams& params)
     {
         params._rttCamera->setClearMask( GL_COLOR_BUFFER_BIT );
     }
+
 
     // set up a StateSet for the RTT camera.
     osg::StateSet* rttStateSet = params._rttCamera->getOrCreateStateSet();
@@ -476,7 +478,7 @@ DrapingTechnique::setUpCamera(OverlayDecorator::TechRTTParams& params)
     // overlay geometry is rendered with no depth testing, and in the order it's found in the
     // scene graph... until further notice.
     rttStateSet->setMode(GL_DEPTH_TEST, 0);
-    rttStateSet->setBinName( "TraversalOrderBin" );
+    rttStateSet->setRenderBinDetails(1, "TraversalOrderBin", osg::StateSet::OVERRIDE_PROTECTED_RENDERBIN_DETAILS );
 
     // add to the terrain stateset, i.e. the stateset that the OverlayDecorator will
     // apply to the terrain before cull-traversing it. This will activate the projective
@@ -567,13 +569,17 @@ DrapingTechnique::preCullTerrain(OverlayDecorator::TechRTTParams& params,
     if ( !params._rttCamera.valid() && _textureUnit.isSet() )
     {
         setUpCamera( params );
+
+        // We do this so we can detect the RTT's camera's parent for 
+        // things like auto-scaling, picking, and so on.
+        params._rttCamera->setView(cv->getCurrentCamera()->getView());
     }
 }
        
 const osg::BoundingSphere&
 DrapingTechnique::getBound(OverlayDecorator::TechRTTParams& params) const
 {
-    return DrapingCullSet::get(params._mainCamera).getBound();
+    return _drapingManager.get(params._mainCamera).getBound();
 }
 
 void
@@ -700,7 +706,6 @@ DrapingTechnique::onInstall( TerrainEngineNode* engine )
         unsigned maxSize = Registry::capabilities().getMaxFastTextureSize();
         _textureSize.init( osg::minimum( 2048u, maxSize ) );
     }
-    OE_INFO << LC << "Using texture size = " << *_textureSize << std::endl;
 }
 
 void

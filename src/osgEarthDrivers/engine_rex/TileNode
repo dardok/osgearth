@@ -103,7 +103,7 @@ namespace osgEarth { namespace Drivers { namespace RexTerrainEngine
         virtual void setMinimumExpirationFrames(unsigned int minExpiryFrames) { _minExpiryFrames = minExpiryFrames; }
 
         virtual void loadChildren();
-        
+
         /** Merge new Tile model data into this tile's rendering data model. */
         void merge(const TerrainTileModel* dataModel, const RenderBindings& bindings);
 
@@ -117,12 +117,16 @@ namespace osgEarth { namespace Drivers { namespace RexTerrainEngine
         void loadSync();
 
         std::set<UID>& newLayers() { return _newLayers; }
+
+        void refreshSharedSamplers(const RenderBindings& bindings);
         
     public: // osg::Node
 
         osg::BoundingSphere computeBound() const;
 
         void traverse(osg::NodeVisitor& nv);
+
+        void resizeGLObjectBuffers(unsigned maxSize);
 
         void releaseGLObjects(osg::State* state) const;
 
@@ -131,7 +135,6 @@ namespace osgEarth { namespace Drivers { namespace RexTerrainEngine
         osg::ref_ptr<SurfaceNode>          _surface;
         osg::ref_ptr<SurfaceNode>          _patch;
         osg::ref_ptr<LoadTileData>         _loadRequest;
-        //EngineContext*                     _context;
         osg::ref_ptr<EngineContext>        _context;
         Threading::Mutex                   _mutex;
         bool                               _dirty;
@@ -146,6 +149,8 @@ namespace osgEarth { namespace Drivers { namespace RexTerrainEngine
         osg::Vec2f                         _morphConstants;
         TileRenderModel                    _renderModel;
         std::set<UID>                      _newLayers;
+        bool                               _empty;
+        bool                               _isRootTile;
 
         osg::observer_ptr<TileNode> _eastNeighbor;
         osg::observer_ptr<TileNode> _southNeighbor;

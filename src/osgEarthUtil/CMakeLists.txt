@@ -23,13 +23,13 @@ SET(HEADERS_ROOT
     Ephemeris
     ExampleResources
     Export
-    FeatureQueryTool
     FlatteningLayer
     Fog
     Formatter
     FractalElevationLayer
     GARSGraticule
     GeodeticGraticule
+    HorizonClipPlane
     HTM
     LatLongFormatter
     LineOfSight
@@ -41,7 +41,6 @@ SET(HEADERS_ROOT
     MGRSGraticule
     MouseCoordsTool
     MultiElevationLayer
-    ObjectLocator
     Ocean
     PolyhedralLineOfSight
     RadialLineOfSight
@@ -63,6 +62,7 @@ SET(HEADERS_ROOT
     TMSPackager
     TopologyGraph
     UTMGraticule
+    UTMLabelingEngine
     VerticalScale
     ViewFitter
     WFS
@@ -112,12 +112,12 @@ SET(SOURCES_ROOT
     EarthManipulator.cpp
     Ephemeris.cpp
     ExampleResources.cpp
-    FeatureQueryTool.cpp
     FlatteningLayer.cpp
     Fog.cpp
     FractalElevationLayer.cpp
     GARSGraticule.cpp
     GeodeticGraticule.cpp
+    HorizonClipPlane.cpp
     HTM.cpp
     LatLongFormatter.cpp
     LinearLineOfSight.cpp
@@ -128,7 +128,6 @@ SET(SOURCES_ROOT
     MGRSGraticule.cpp
     MouseCoordsTool.cpp
     MultiElevationLayer.cpp
-    ObjectLocator.cpp
     Ocean.cpp
     PolyhedralLineOfSight.cpp
     RadialLineOfSight.cpp
@@ -148,6 +147,7 @@ SET(SOURCES_ROOT
     TMSPackager.cpp
     TopologyGraph.cpp
     UTMGraticule.cpp
+    UTMLabelingEngine.cpp
     VerticalScale.cpp
     ViewFitter.cpp
     WFS.cpp

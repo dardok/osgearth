@@ -349,8 +349,12 @@ TerrainLayer::open()
         CacheSettings* oldSettings = CacheSettings::get(_readOptions.get());
         _cacheSettings = oldSettings ? new CacheSettings(*oldSettings) : new CacheSettings();
 
+        // Store for further propagation!
+        _cacheSettings->store(_readOptions.get());
+
         // Integrate a cache policy from this Layer's options:
         _cacheSettings->integrateCachePolicy(options().cachePolicy());
+
 
         // If you created the layer with a pre-created tile source, it will already by set.
         if (!_tileSource.valid())
@@ -368,50 +372,21 @@ TerrainLayer::open()
                 ts = createAndOpenTileSource();
             }
 
-            // If we loaded a tile source, give it some information about caching
-            // if appropriate.
-            if (ts.valid())
+            // All good
+            if (ts.valid() && !_tileSource.valid())
             {
-                if (_cacheSettings->isCacheEnabled())
-                {
-                    // read the cache policy hint from the tile source unless user expressly set 
-                    // a policy in the initialization options. In other words, the hint takes
-                    // ultimate priority (even over the Registry override) unless expressly
-                    // overridden in the layer options!
-                    refreshTileSourceCachePolicyHint( ts.get() );
-
-                    // Unless the user has already configured an expiration policy, use the "last modified"
-                    // timestamp of the TileSource to set a minimum valid cache entry timestamp.
-                    const CachePolicy& cp = options().cachePolicy().get();
-
-                    if ( !cp.minTime().isSet() && !cp.maxAge().isSet() && ts->getLastModifiedTime() > 0)
-                    {
-                        // The "effective" policy overrides the runtime policy, but it does not get serialized.
-                        _cacheSettings->cachePolicy()->mergeAndOverride( cp );
-                        _cacheSettings->cachePolicy()->minTime() = ts->getLastModifiedTime();
-                        OE_INFO << LC << "driver says min valid timestamp = " << DateTime(*cp.minTime()).asRFC1123() << "\n";
-                    }
-                }
-
-                // All is well - set the tile source.
-                if ( !_tileSource.valid() )
-                {
-                    _tileSource = ts.release();
-                }
+                _tileSource = ts.release();
             }
         }
         else
         {
-            // User supplied the tile source, so attempt to get its profile:
-            setProfile(_tileSource->getProfile() );
-            if (!_profile.valid())
-            {
-                setStatus( Status::Error(getName(), "Cannot establish profile") );
-            }
+            // User supplied the tile source, so attempt to initialize it:
+            _tileSource = createAndOpenTileSource();
         }
 
-        // Finally, open and activate a caching bin for this layer.
-        if (_cacheSettings->isCacheEnabled())
+        // Finally, open and activate a caching bin for this layer if it
+        // hasn't already been created.
+        if (_cacheSettings->isCacheEnabled() && _cacheSettings->getCacheBin() == 0L)
         {
             CacheBin* bin = _cacheSettings->getCache()->addBin(_runtimeCacheId);
             if (bin)
@@ -421,9 +396,6 @@ TerrainLayer::open()
             }
         }
 
-        // Store the updated settings in the read options so we can propagate 
-        // them as necessary.
-        _cacheSettings->store(_readOptions.get());
         OE_INFO << LC << _cacheSettings->toString() << "\n";
 
         // Done!
@@ -457,6 +429,15 @@ TerrainLayer::getCacheSettings() const
     return _cacheSettings.get();
 }
 
+void
+TerrainLayer::setOpacity(float value)
+{
+    // For terrain layers, we don't want to install the transparency program
+    // nor mess with the rendering bins. The terrain engine will handle
+    // opacity on its own
+    options().opacity() = value;
+    VisibleLayer::fireCallback(&VisibleLayerCallback::onOpacityChanged);
+}
 
 void
 TerrainLayer::setTargetProfileHint( const Profile* profile )
@@ -733,10 +714,53 @@ TerrainLayer::createAndOpenTileSource()
             _readOptions->setOptionString( s );
         }
 
+        // If we're setting any custom options, do so now before opening:
+        if (options().tileSize().isSet())
+            ts->setPixelsPerTile(options().tileSize().get());
+
+        if (options().noDataValue().isSet())
+            ts->setNoDataValue(options().noDataValue().get());
+
+        if (options().minValidValue().isSet())
+            ts->setMinValidValue(options().minValidValue().get());
+
+        if (options().maxValidValue().isSet())
+            ts->setMaxValidValue(options().maxValidValue().get());
+
+
         // report on a manual override profile:
         if ( ts->getProfile() )
         {
             OE_INFO << LC << "Override profile: "  << ts->getProfile()->toString() << std::endl;
+        }
+
+        // Now that the tile source exists, set up the cache.
+        if (_cacheSettings->isCacheEnabled())
+        {
+            // read the cache policy hint from the tile source unless user expressly set 
+            // a policy in the initialization options. In other words, the hint takes
+            // ultimate priority (even over the Registry override) unless expressly
+            // overridden in the layer options!
+            refreshTileSourceCachePolicyHint( ts.get() );
+
+            // Unless the user has already configured an expiration policy, use the "last modified"
+            // timestamp of the TileSource to set a minimum valid cache entry timestamp.
+            const CachePolicy& cp = options().cachePolicy().get();
+
+            if ( !cp.minTime().isSet() && !cp.maxAge().isSet() && ts->getLastModifiedTime() > 0)
+            {
+                // The "effective" policy overrides the runtime policy, but it does not get serialized.
+                _cacheSettings->cachePolicy()->mergeAndOverride( cp );
+                _cacheSettings->cachePolicy()->minTime() = ts->getLastModifiedTime();
+                OE_INFO << LC << "driver says min valid timestamp = " << DateTime(*cp.minTime()).asRFC1123() << "\n";
+            }
+            
+            CacheBin* bin = _cacheSettings->getCache()->addBin(_runtimeCacheId);
+            if (bin)
+            {
+                _cacheSettings->setCacheBin(bin);
+                OE_INFO << LC << "Cache bin is [" << bin->getID() << "]\n";
+            }
         }
 
         // Open the tile source (if it hasn't already been started)
@@ -750,20 +774,8 @@ TerrainLayer::createAndOpenTileSource()
         // properties to and fro.
         if ( tileSourceStatus.isOK() )
         {
-            if (options().tileSize().isSet())
-                ts->setPixelsPerTile(options().tileSize().get());
-
             if (!ts->getDataExtents().empty())
                 _dataExtents = ts->getDataExtents();
-
-            if (options().noDataValue().isSet())
-                ts->setNoDataValue(options().noDataValue().get());
-
-            if (options().minValidValue().isSet())
-                ts->setMinValidValue(options().minValidValue().get());
-
-            if (options().maxValidValue().isSet())
-                ts->setMaxValidValue(options().maxValidValue().get());
         }
         else
         {
@@ -851,7 +863,7 @@ TerrainLayer::mayHaveDataInExtent(const GeoExtent& ex) const
 
     // Get extent in local profile:
     GeoExtent localExtent = ex;
-    if (getProfile() && getProfile()->getSRS()->isHorizEquivalentTo(ex.getSRS()))
+    if (getProfile() && !getProfile()->getSRS()->isHorizEquivalentTo(ex.getSRS()))
     {
         localExtent = getProfile()->clampAndTransformExtent(ex);
     }
@@ -954,10 +966,11 @@ void
 TerrainLayer::setReadOptions(const osgDB::Options* readOptions)
 {
     // clone the options, or create it not set
-    Layer::setReadOptions(readOptions);
+    _readOptions = Registry::cloneOrCreateOptions(readOptions);
+    //Layer::setReadOptions(readOptions);
 
     // store HTTP proxy settings in the options:
-    storeProxySettings( _readOptions );
+    storeProxySettings( _readOptions.get() );
     
     // store the referrer for relative-path resolution
     URIContext( options().referrer() ).store( _readOptions.get() );
@@ -967,24 +980,11 @@ TerrainLayer::setReadOptions(const osgDB::Options* readOptions)
     _cacheBinMetadata.clear();
 }
 
-#if 0
-bool
-TerrainLayer::getDataExtents(DataExtentList& output) const
+std::string
+TerrainLayer::getCacheID() const
 {
-    output.clear();
-
-    // if a tile source is available, get the extents directly from it:
-    if (getTileSource())
-        output = getTileSource()->getDataExtents();
-
-    // otherwise, try the cache. Extents are the same regardless of
-    // profile so just use the first one available:
-    else if (!_cacheBinMetadata.empty())
-        output = _cacheBinMetadata.begin()->second->_dataExtents;
-
-    return !output.empty();
+    return _runtimeCacheId;
 }
-#endif
 
 const DataExtentList&
 TerrainLayer::getDataExtents() const
@@ -1037,6 +1037,11 @@ TerrainLayer::getDataExtentsUnion() const
     return _dataExtentsUnion;
 }
 
+const GeoExtent&
+TerrainLayer::getExtent() const
+{
+    return getDataExtentsUnion();
+}
 
 void
 TerrainLayer::storeProxySettings(osgDB::Options* readOptions)
@@ -1155,7 +1160,7 @@ TerrainLayer::getBestAvailableTileKey(const TileKey& key) const
 
     if ( intersects )
     {
-        return key.createAncestorKey(std::min(highestLOD, MDL));
+        return key.createAncestorKey(std::min(key.getLOD(), std::min(highestLOD, MDL)));
     }
 
     return TileKey::INVALID;

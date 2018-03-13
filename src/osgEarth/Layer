@@ -27,6 +27,7 @@
 #include <osgEarth/PluginLoader>
 #include <osgEarth/CachePolicy>
 #include <osgEarth/TerrainResources>
+#include <osgEarth/Cache>
 #include <osg/BoundingBox>
 #include <osg/StateSet>
 #include <osgDB/Options>
@@ -110,9 +111,12 @@ namespace osgEarth
     /**
      * Base callback for all Layer types
      */
-    class LayerCallback : public osg::Referenced
+    struct LayerCallback : public osg::Referenced
     {
-        //NOP
+        //! Called after Layer::setEnabled changes the enabled state
+        virtual void onEnabledChanged(class Layer* layer) { }
+
+        typedef void (LayerCallback::*MethodPtr)(class Layer* layer);
     };
 
 
@@ -165,6 +169,11 @@ namespace osgEarth
         virtual const Status& open();
 
         /**
+         * Close a layer
+         */
+        virtual void close();
+
+        /**
          * Gets the status of this layer.
          */
         const Status& getStatus() const { return _status; }
@@ -181,8 +190,13 @@ namespace osgEarth
         virtual Config getConfig() const;
 
         /**
-         * Whether the layer is enabled (used in the map). This will return
-         * false if the layer is set to disabled OR if getStatus returns an error.
+         * Whether the layer is used in the map.
+         */
+        virtual void setEnabled(bool value);
+
+        /**
+         * Whether the layer is used in the map. 
+         * This will return false if the layer is set to disabled OR if getStatus returns an error.
          */
         virtual bool getEnabled() const;
 
@@ -193,6 +207,18 @@ namespace osgEarth
          * is removed from the Map.
          */
         virtual osg::Node* getOrCreateNode() { return 0L; }
+
+        /**
+         * Extent of this layer's data. 
+         * This method may return GeoExtent::INVALID which just means that the
+         * information is unavailable.
+         */
+        virtual const GeoExtent& getExtent() const;
+
+        /**
+         * Caching ID for this layer
+         */
+        virtual std::string getCacheID() const;
 
     public:
 
@@ -208,24 +234,13 @@ namespace osgEarth
         /**
          * Access the layer's stateset, creating it is necessary
          */
-        osg::StateSet* getOrCreateStateSet() {
-            if (!_stateSet.valid())
-                _stateSet = new osg::StateSet();
-            return getStateSet();
-        }
+        osg::StateSet* getOrCreateStateSet();
 
         /**
          * Layer's stateset, or NULL if none exists
          */
-        virtual osg::StateSet* getStateSet() const {
+        osg::StateSet* getStateSet() const {
             return _stateSet.get();
-        }
-
-        /**
-         * Sets a new stateset on this layer
-         */
-        void setStateSet(osg::StateSet* stateSet) {
-            _stateSet = stateSet;
         }
 
         /**
@@ -233,21 +248,30 @@ namespace osgEarth
          */
         enum RenderType
         {
-            // Layer does not require its own terrain rendering pass (model layers, elevation layers)
-            RENDERTYPE_NONE, 
+            // Layer does not draw anything (directly)
+            RENDERTYPE_NONE,
 
-            // Layer requires a terrain rendering pass that draws terrain tile geometry
-            RENDERTYPE_TILE,
+            // Layer requires a terrain rendering pass that draws terrain tiles with texturing
+            RENDERTYPE_TERRAIN_SURFACE,
 
             // Layer requires a terrain rendering pass that emits terrian patches or
             // invokes a custom drawing function
-            RENDERTYPE_PATCH
+            RENDERTYPE_TERRAIN_PATCH,
+
+            // Layer that renders its own node graph or other geometry (no terrain)
+            RENDERTYPE_CUSTOM = RENDERTYPE_NONE,
+
+            // @deprecated Backwards compatibility
+            RENDERTYPE_TILE = RENDERTYPE_TERRAIN_SURFACE
         };
 
+        //! Rendering type of this layer
         RenderType getRenderType() const { return _renderType; }
 
+        //! Rendering type of this layer
         void setRenderType(RenderType value) { _renderType = value; }
 
+        //! Callback that modifies the layer's bounding box for a given tile key
         virtual void modifyTileBoundingBox(const TileKey& key, osg::BoundingBox& box) const { }
 
         /**
@@ -269,10 +293,7 @@ namespace osgEarth
     public: // Experimental
 
         //! Called before culling this layer - return false to reject.
-        virtual bool preCull(osgUtil::CullVisitor*) const;
-
-        //! Called after culling this layer
-        virtual void postCull(osgUtil::CullVisitor*) const;
+        virtual bool cull(const osgUtil::CullVisitor*, osg::State::StateSetStack& stateSetStack) const;
 
 
     public: // osg::Object
@@ -296,6 +317,9 @@ namespace osgEarth
         virtual void init();
 
         const Status& setStatus(const Status& status) { _status = status; return _status; }
+        const Status& setStatus(const Status::Code& statusCode, const std::string& message) { return setStatus(Status(statusCode, message)); }
+
+        void fireCallback(LayerCallback::MethodPtr);
 
     private:
         UID _uid;
@@ -306,8 +330,8 @@ namespace osgEarth
     protected:
         typedef std::vector<osg::ref_ptr<LayerCallback> > CallbackVector;
         CallbackVector _callbacks;
-
         osg::ref_ptr<osgDB::Options> _readOptions;
+        osg::ref_ptr<CacheSettings> _cacheSettings;
 
         // allow the map access to the addedToMap/removedFromMap methods
         friend class Map;

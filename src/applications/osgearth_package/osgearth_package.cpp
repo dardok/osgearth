@@ -31,7 +31,11 @@
 #include <osgEarth/TileVisitor>
 #include <osgEarth/ImageLayer>
 #include <osgEarth/ElevationLayer>
+
+#include <osgEarthFeatures/FeatureCursor>
+
 #include <osgEarthUtil/TMSPackager>
+
 #include <osgEarthDrivers/feature_ogr/OGRFeatureOptions>
 #include <osgEarthDrivers/tms/TMSOptions>
 
@@ -308,7 +312,7 @@ makeTMS( osg::ArgumentParser& args )
 
     if (verbose)
     {
-        visitor->setProgressCallback( progress );
+        visitor->setProgressCallback( progress.get() );
     }
 
     visitor->setMinLevel( minLevel );
@@ -326,10 +330,10 @@ makeTMS( osg::ArgumentParser& args )
     // Setup a TMSPackager with all the options.
     TMSPackager packager;
     packager.setExtension(extension);
-    packager.setVisitor(visitor);
+    packager.setVisitor(visitor.get());
     packager.setDestination(rootFolder);    
     packager.setElevationPixelDepth(elevationPixelDepth);
-    packager.setWriteOptions(options);    
+    packager.setWriteOptions(options.get());    
     packager.setOverwrite(overwrite);
     packager.setKeepEmpties(keepEmpties);
     packager.setApplyAlphaMask(applyAlphaMask);

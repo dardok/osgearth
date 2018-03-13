@@ -17,6 +17,7 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>
  */
 #include <osgEarthFeatures/Filter>
+#include <osgEarthFeatures/FilterContext>
 #include <osgEarthSymbology/LineSymbol>
 #include <osgEarthSymbology/PointSymbol>
 #include <osgEarth/ECEF>
@@ -103,7 +104,8 @@ FeatureFilterRegistry::create(const Config& conf, const osgDB::Options* dbo)
         dbopt->setPluginData( FEATURE_FILTER_OPTIONS_TAG, (void*)&options );
 
         std::string driverExt = std::string( ".osgearth_featurefilter_" ) + driver;
-        result = dynamic_cast<FeatureFilter*>( osgDB::readObjectFile( driverExt, dbopt.get() ) );
+        osg::ref_ptr<osg::Object> object = osgDB::readRefObjectFile( driverExt, dbopt.get() );
+        result = dynamic_cast<FeatureFilter*>( object.release() );
     }
 
     if ( !result.valid() )
@@ -154,8 +156,8 @@ FeaturesToNodeFilter::computeLocalizers( const FilterContext& context, const osg
             {
                 osg::Vec3d centroid, centroidECEF;
                 geodExtent.getCentroid( centroid.x(), centroid.y() );
-                geogSRS->transform( centroid, geogSRS->getECEF(), centroidECEF );
-                geogSRS->getECEF()->createLocalToWorld( centroidECEF, out_l2w );
+                geogSRS->transform( centroid, geogSRS->getGeocentricSRS(), centroidECEF );
+                geogSRS->getGeocentricSRS()->createLocalToWorld( centroidECEF, out_l2w );
                 out_w2l.invert( out_l2w );
             }
         }

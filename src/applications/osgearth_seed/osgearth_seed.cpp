@@ -31,12 +31,15 @@
 #include <osgEarth/CacheSeed>
 #include <osgEarth/MapNode>
 #include <osgEarth/Registry>
-#include <osgEarthDrivers/feature_ogr/OGRFeatureOptions>
 #include <osgEarth/FileUtils>
 #include <osgEarth/ImageLayer>
 #include <osgEarth/ElevationLayer>
-
 #include <osgEarth/TileVisitor>
+#include <osgEarth/FileUtils>
+
+#include <osgEarthFeatures/FeatureCursor>
+
+#include <osgEarthDrivers/feature_ogr/OGRFeatureOptions>
 
 #include <iostream>
 #include <sstream>
@@ -86,7 +89,7 @@ int
         << "    --seed file.earth                   ; Seeds the cache in a .earth file"  << std::endl
         << "        [--estimate]                    ; Print out an estimation of the number of tiles, disk space and time it will take to perform this seed operation" << std::endl
         << "        [--min-level level]             ; Lowest LOD level to seed (default=0)" << std::endl
-        << "        [--max-level level]             ; Highest LOD level to seed (defaut=highest available)" << std::endl
+        << "        [--max-level level]             ; Highest LOD level to seed (default=highest available)" << std::endl
         << "        [--bounds xmin ymin xmax ymax]* ; Geospatial bounding box to seed (in map coordinates; default=entire map)" << std::endl
         << "        [--index shapefile]             ; Use the feature extents in a shapefile to set the bounding boxes for seeding" << std::endl
         << "        [--mp]                          ; Use multiprocessing to process the tiles.  Useful for GDAL sources as this avoids the global GDAL lock" << std::endl
@@ -291,7 +294,7 @@ seed( osg::ArgumentParser& args )
     
     if (verbose)
     {
-        visitor->setProgressCallback( progress );
+        visitor->setProgressCallback( progress.get() );
     }
 
     if ( minLevel >= 0 )
@@ -322,7 +325,7 @@ seed( osg::ArgumentParser& args )
         {
             OE_NOTICE << "Seeding single layer " << layer->getName() << std::endl;
             osg::Timer_t start = osg::Timer::instance()->tick();        
-            seeder.run(layer, map);
+            seeder.run(layer.get(), map);
             osg::Timer_t end = osg::Timer::instance()->tick();
             if (verbose)
             {
@@ -344,7 +347,7 @@ seed( osg::ArgumentParser& args )
         {
             OE_NOTICE << "Seeding single layer " << layer->getName() << std::endl;
             osg::Timer_t start = osg::Timer::instance()->tick();        
-            seeder.run(layer, map);
+            seeder.run(layer.get(), map);
             osg::Timer_t end = osg::Timer::instance()->tick();
             if (verbose)
             {
@@ -570,7 +573,7 @@ purge( osg::ArgumentParser& args )
                 if ( input == "y" || input == "Y" )
                 {
                     std::cout << "Purging.." << std::flush;
-                    entries[k-1]._bin->purge();
+                    entries[k-1]._bin->clear();
                 }
                 else
                 {

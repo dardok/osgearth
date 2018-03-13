@@ -26,6 +26,7 @@
 #include <osg/Texture>
 #include <osg/GL>
 #include <osg/NodeVisitor>
+#include <osgDB/ReaderWriter>
 #include <vector>
 
 //These formats were not added to OSG until after 2.8.3 so we need to define them to use them.
@@ -336,6 +337,27 @@ namespace osgEarth
          * 
          */
         static osg::Image* upSampleNN(const osg::Image* src, int quadrant);
+
+        /**
+         * Activates mipmapping for a texture image if the correct filters exist.
+         *
+         * If OSG has an ImageProcessor service installed, this method will use that
+         * to generate mipmaps. If not, the method will be a NOP and the GPU wil
+         * generate mipmaps (if necessary) upon GPU transfer.
+         */
+        static void activateMipMaps(osg::Texture* texture);
+
+        /**
+         * Gets an osgDB::ReaderWriter for the given input stream.
+         * Returns NULL if no ReaderWriter can be found.
+         */
+        static osgDB::ReaderWriter* getReaderWriterForStream(std::istream& stream);
+
+        /**
+         * Reads an osg::Image from the given input stream.         
+         * Returns NULL if the image could not be read.
+         */
+        static osg::Image* readStream(std::istream& stream, const osgDB::Options* options);
 
         /**
          * Reads color data out of an image, regardles of its internal pixel format.

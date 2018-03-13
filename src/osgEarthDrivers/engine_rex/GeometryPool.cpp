@@ -54,7 +54,7 @@ _debug   ( false )
     // sign up for the update traversal so we can prune unused pool objects.
     setNumChildrenRequiringUpdateTraversal(1u);
 
-    _tileSize = _options.tileSize().get();
+    //_tileSize = _options.tileSize().get();
 
     // activate debugging mode
     if ( getenv("OSGEARTH_DEBUG_REX_GEOMETRY_POOL") != 0L )
@@ -76,14 +76,15 @@ _debug   ( false )
 }
 
 void
-GeometryPool::getPooledGeometry(const TileKey&               tileKey,
-                                const MapInfo&               mapInfo,
-                                osg::ref_ptr<SharedGeometry>& out,
-                                MaskGenerator*               maskSet)
+GeometryPool::getPooledGeometry(const TileKey&                tileKey,
+                                const MapInfo&                mapInfo,
+                                unsigned                      tileSize,
+                                MaskGenerator*                maskSet,
+                                osg::ref_ptr<SharedGeometry>& out)
 {
     // convert to a unique-geometry key:
     GeometryKey geomKey;
-    createKeyForTileKey( tileKey, _tileSize, mapInfo, geomKey );
+    createKeyForTileKey( tileKey, tileSize, mapInfo, geomKey );
 
     if ( _enabled )
     {
@@ -101,10 +102,12 @@ GeometryPool::getPooledGeometry(const TileKey&               tileKey,
         else
         {
             // Not found. Create it.
-            out = createGeometry( tileKey, mapInfo, maskSet );
+            out = createGeometry( tileKey, mapInfo, tileSize, maskSet );
 
-            if (!masking)
+            if (!masking && out.valid())
+            {
                 _geometryMap[ geomKey ] = out.get();
+            }
 
             if ( _debug )
             {
@@ -115,25 +118,25 @@ GeometryPool::getPooledGeometry(const TileKey&               tileKey,
 
     else
     {
-        out = createGeometry( tileKey, mapInfo, maskSet );
+        out = createGeometry( tileKey, mapInfo, tileSize, maskSet );
     }
 }
 
 void
 GeometryPool::createKeyForTileKey(const TileKey&             tileKey,
-                                  unsigned                   size,
+                                  unsigned                   tileSize,
                                   const MapInfo&             mapInfo,
                                   GeometryPool::GeometryKey& out) const
 {
     out.lod  = tileKey.getLOD();
-    out.tileY = mapInfo.isGeocentric()? tileKey.getTileY() : 0; //.getExtent().yMin() : 0.0;
-    out.size = size;
+    out.tileY = mapInfo.isGeocentric()? tileKey.getTileY() : 0;
+    out.size = tileSize;
 }
 
 int
-GeometryPool::getNumSkirtElements() const
+GeometryPool::getNumSkirtElements(unsigned tileSize) const
 {
-    return _options.heightFieldSkirtRatio().get() > 0.0 ? (_tileSize-1) * 4 * 6 : 0;
+    return _options.heightFieldSkirtRatio().get() > 0.0 ? (tileSize-1) * 4 * 6 : 0;
 }
 
 namespace
@@ -145,6 +148,26 @@ namespace
         if ( (col & 0x1)==1 )                   return 2;
         return 1;            
     }
+
+    struct Sort_by_X {
+        osg::Vec3Array& _verts;
+        Sort_by_X(osg::Vec3Array* verts) : _verts(*verts) { }
+        bool operator()(unsigned lhs, unsigned rhs) const {
+            if (_verts[lhs].x() < _verts[rhs].x()) return true;
+            if (_verts[lhs].x() > _verts[rhs].x()) return false;
+            return _verts[lhs].y() < _verts[rhs].y();
+        }
+    };
+
+    struct Sort_by_Y {
+        osg::Vec3Array& _verts;
+        Sort_by_Y(osg::Vec3Array* verts) : _verts(*verts) { }
+        bool operator()(unsigned lhs, unsigned rhs) const {
+            if (_verts[lhs].y() < _verts[rhs].y()) return true;
+            if (_verts[lhs].y() > _verts[rhs].y()) return false;
+            return _verts[lhs].x() < _verts[rhs].x();
+        }
+    };
 }
 
 #define addSkirtDataForIndex(INDEX, HEIGHT) \
@@ -152,10 +175,12 @@ namespace
     verts->push_back( (*verts)[INDEX] ); \
     normals->push_back( (*normals)[INDEX] ); \
     texCoords->push_back( (*texCoords)[INDEX] ); \
+    texCoords->back().z() += VERTEX_MARKER_SKIRT; \
     if ( neighbors ) neighbors->push_back( (*neighbors)[INDEX] ); \
     verts->push_back( (*verts)[INDEX] - ((*normals)[INDEX])*(HEIGHT) ); \
     normals->push_back( (*normals)[INDEX] ); \
     texCoords->push_back( (*texCoords)[INDEX] ); \
+    texCoords->back().z() += VERTEX_MARKER_SKIRT; \
     if ( neighbors ) neighbors->push_back( (*neighbors)[INDEX] - ((*normals)[INDEX])*(HEIGHT) ); \
 }
 
@@ -185,6 +210,7 @@ namespace
 SharedGeometry*
 GeometryPool::createGeometry(const TileKey& tileKey,
                              const MapInfo& mapInfo,
+                             unsigned       tileSize,
                              MaskGenerator* maskSet) const
 {    
     // Establish a local reference frame for the tile:
@@ -200,47 +226,45 @@ GeometryPool::createGeometry(const TileKey& tileKey,
     // Attempt to calculate the number of verts in the surface geometry.
     bool createSkirt = _options.heightFieldSkirtRatio() > 0.0f;
 
-    unsigned numVertsInSurface    = (_tileSize*_tileSize);
-    unsigned numVertsInSkirt      = createSkirt ? _tileSize*4u - 4u : 0;
+    unsigned numVertsInSurface    = (tileSize*tileSize);
+    unsigned numVertsInSkirt      = createSkirt ? tileSize*4u - 4u : 0;
     unsigned numVerts             = numVertsInSurface + numVertsInSkirt;    
-    unsigned numIndiciesInSurface = (_tileSize-1) * (_tileSize-1) * 6;
-    unsigned numIncidesInSkirt    = getNumSkirtElements();
+    unsigned numIndiciesInSurface = (tileSize-1) * (tileSize-1) * 6;
+    unsigned numIncidesInSkirt    = getNumSkirtElements(tileSize);
     
     // TODO: reconsider this ... 
     GLenum mode = (_options.gpuTessellation() == true) ? GL_PATCHES : GL_TRIANGLES;
 
-    // Pre-allocate enough space for all triangles.
-    osg::DrawElements* primSet = new osg::DrawElementsUShort(mode);
-    primSet->setElementBufferObject(new osg::ElementBufferObject());
-
-    primSet->reserveElements(numIndiciesInSurface + numIncidesInSkirt);
-
     osg::BoundingSphere tileBound;
 
     // the geometry:
-    SharedGeometry* geom = new SharedGeometry();
+    osg::ref_ptr<SharedGeometry> geom = new SharedGeometry();
     geom->setUseVertexBufferObjects(true);
     //geom->setUseDisplayList(false);
 
     osg::ref_ptr<osg::VertexBufferObject> vbo = new osg::VertexBufferObject();
 
+    // Pre-allocate enough space for all triangles.
+    osg::DrawElements* primSet = new osg::DrawElementsUShort(mode);
+    primSet->setElementBufferObject(new osg::ElementBufferObject());
+    primSet->reserveElements(numIndiciesInSurface + numIncidesInSkirt);
     geom->setDrawElements(primSet);
 
     // the vertex locations:
-    osg::Vec3Array* verts = new osg::Vec3Array();
+    osg::ref_ptr<osg::Vec3Array> verts = new osg::Vec3Array();
     verts->setVertexBufferObject(vbo.get());
     verts->reserve( numVerts );
     verts->setBinding(verts->BIND_PER_VERTEX);
-    geom->setVertexArray( verts );
+    geom->setVertexArray( verts.get() );
 
     // the surface normals (i.e. extrusion vectors)
-    osg::Vec3Array* normals = new osg::Vec3Array();
+    osg::ref_ptr<osg::Vec3Array> normals = new osg::Vec3Array();
     normals->setVertexBufferObject(vbo.get());
     normals->reserve( numVerts );
     normals->setBinding(normals->BIND_PER_VERTEX);
-    geom->setNormalArray( normals );
+    geom->setNormalArray( normals.get() );
     
-    osg::Vec3Array* neighbors = 0L;
+    osg::ref_ptr<osg::Vec3Array> neighbors = 0L;
     if ( _options.morphTerrain() == true )
     {
         // neighbor positions (for morphing)
@@ -248,8 +272,7 @@ GeometryPool::createGeometry(const TileKey& tileKey,
         neighbors->setBinding(neighbors->BIND_PER_VERTEX);
         neighbors->setVertexBufferObject(vbo.get());
         neighbors->reserve( numVerts );
-        geom->setNeighborArray(neighbors);
-        //geom->setTexCoordArray( 1, neighbors );
+        geom->setNeighborArray(neighbors.get());
     }
 
     // tex coord is [0..1] across the tile. The 3rd dimension tracks whether the
@@ -265,27 +288,27 @@ GeometryPool::createGeometry(const TileKey& tileKey,
     osg::Vec3Array* texCoords = _sharedTexCoords.get();
 #else
     bool populateTexCoords = true;
-    osg::Vec3Array* texCoords = new osg::Vec3Array();
+    osg::ref_ptr<osg::Vec3Array> texCoords = new osg::Vec3Array();
     texCoords->setBinding(texCoords->BIND_PER_VERTEX);
     texCoords->setVertexBufferObject(vbo.get());
     texCoords->reserve( numVerts );
 #endif
 
-    geom->setTexCoordArray(texCoords);
+    geom->setTexCoordArray(texCoords.get());
     
-    float delta = 1.0/(_tileSize-1);
+    float delta = 1.0/(tileSize-1);
     osg::Vec3d tdelta(delta,0,0);
     tdelta.normalize();
     osg::Vec3d vZero(0,0,0);
 
     osg::ref_ptr<GeoLocator> locator = GeoLocator::createForKey( tileKey, mapInfo );
 
-    for(unsigned row=0; row<_tileSize; ++row)
+    for(unsigned row=0; row<tileSize; ++row)
     {
-        float ny = (float)row/(float)(_tileSize-1);
-        for(unsigned col=0; col<_tileSize; ++col)
+        float ny = (float)row/(float)(tileSize-1);
+        for(unsigned col=0; col<tileSize; ++col)
         {
-            float nx = (float)col/(float)(_tileSize-1);
+            float nx = (float)col/(float)(tileSize-1);
 
             osg::Vec3d model;
             locator->unitToModel(osg::Vec3d(nx, ny, 0.0f), model);
@@ -295,8 +318,8 @@ GeometryPool::createGeometry(const TileKey& tileKey,
 
             if ( populateTexCoords )
             {
-                // if masked then set textCoord z-value to 0.0
-                float marker = maskSet ? maskSet->getMarker(nx, ny) : MASK_MARKER_NORMAL;
+                // Use the Z coord as a type marker
+                float marker = maskSet ? maskSet->getMarker(nx, ny) : VERTEX_MARKER_GRID;
                 texCoords->push_back( osg::Vec3f(nx, ny, marker) );
             }
 
@@ -309,157 +332,173 @@ GeometryPool::createGeometry(const TileKey& tileKey,
             // neighbor:
             if ( neighbors )
             {
-                osg::Vec3d modelNeighborLTP = (*verts)[verts->size() - getMorphNeighborIndexOffset(col, row, _tileSize)];
+                osg::Vec3d modelNeighborLTP = (*verts)[verts->size() - getMorphNeighborIndexOffset(col, row, tileSize)];
                 neighbors->push_back(modelNeighborLTP);
             }
         }
     }
 
-    // Now tessellate the surface.
-    
-    // TODO: do we really need this??
-    bool swapOrientation = !locator->orientationOpenGL();
-
-    for(unsigned j=0; j<_tileSize-1; ++j)
-    {
-        for(unsigned i=0; i<_tileSize-1; ++i)
-        {
-            int i00;
-            int i01;
-            if (swapOrientation)
-            {
-                i01 = j*_tileSize + i;
-                i00 = i01+_tileSize;
-            }
-            else
-            {
-                i00 = j*_tileSize + i;
-                i01 = i00+_tileSize;
-            }
-
-            int i10 = i00+1;
-            int i11 = i01+1;
-
-            // skip any triangles that have a discarded vertex:
-            bool discard = maskSet && (
-                maskSet->isMasked( (*texCoords)[i00] ) ||
-                maskSet->isMasked( (*texCoords)[i11] )
-            );
-
-            if ( !discard )
-            {
-                discard = maskSet && maskSet->isMasked( (*texCoords)[i01] );
-                if ( !discard )
-                {
-                    primSet->addElement(i01);
-                    primSet->addElement(i00);
-                    primSet->addElement(i11);
-                }
-            
-                discard = maskSet && maskSet->isMasked( (*texCoords)[i10] );
-                if ( !discard )
-                {
-                    primSet->addElement(i00);
-                    primSet->addElement(i10);
-                    primSet->addElement(i11);
-                }
-            }
-        }
-    }
-
-    // create mask geometry
-    bool skirtCreated = false;
-
+    // By default we tessellate the surface, but if there's a masking set
+    // it might replace some or all of our surface geometry.
+    bool tessellateSurface = true;
+                    
     if (maskSet)
     {
-        int s = verts->size();
-        osg::ref_ptr<osg::DrawElementsUInt> maskPrim = maskSet->createMaskPrimitives(mapInfo, verts, texCoords, normals, neighbors);
-        if (maskPrim)
-        {
-            maskPrim->setElementBufferObject(primSet->getElementBufferObject());
-            geom->setMaskElements(maskPrim);
+        // The mask generator adds to the passed-in arrays as necessary,
+        // and then returns a new primtive set containing all the new triangles.
+        osg::ref_ptr<osg::DrawElementsUInt> maskElements;
 
+        MaskGenerator::Result r = maskSet->createMaskPrimitives(
+            mapInfo,
+            verts.get(), texCoords.get(), normals.get(), neighbors.get(),
+            maskElements);
+
+        if (r == MaskGenerator::R_BOUNDARY_INTERSECTS_TILE && 
+            maskElements.valid() && 
+            maskElements->size() > 0)
+        {
+            // Share the same EBO as the surface geometry
+            maskElements->setElementBufferObject(primSet->getElementBufferObject());
+            geom->setMaskElements(maskElements.get());
+
+            // Build a skirt for the mask geometry?
             if (createSkirt)
             {
-                // Skirts for masking geometries are complicated. There are two parts.
-                // The first part is the "perimeter" of the tile, i.e the outer edge of the 
-                // tessellation. This code will detect that outer boundary and create skrits
-                // for it.
-                // The second part (NYI) detects the actual inner boundary ("patch geometry")
-                // that patches the tile tessellation to the masking boundary. TDB.
-                TopologyGraph topo;
-                BuildTopologyVisitor visitor(topo);
-                visitor.apply(geom, verts); 
+                // calculate the skirt extrusion height
+                double height = tileBound.radius() * _options.heightFieldSkirtRatio().get();
 
-                if (topo._verts.empty() == false)
+                // Construct a node+edge graph out of the masking geometry:
+                osg::ref_ptr<TopologyGraph> graph = TopologyBuilder::create(verts.get(), maskElements.get(), tileKey.str());
+
+                // Extract the boundaries (if the topology is discontinuous,
+                // there will be more than one)
+                for (unsigned i = 0; i<graph->getNumBoundaries(); ++i)
                 {
                     TopologyGraph::IndexVector boundary;
-                    topo.createBoundary(boundary);
-                
-                    double height = tileBound.radius() * _options.heightFieldSkirtRatio().get();
-                    unsigned skirtIndex = verts->size();
+                    graph->createBoundary(i, boundary);
 
-                    unsigned matches = 0;
-                    for (TopologyGraph::IndexVector::const_iterator i = boundary.begin(); i != boundary.end(); ++i)
+                    if (boundary.size() >= 3)
                     {
-                        int k;
-                        for (k = 0; k<skirtIndex; ++k)
+                        unsigned skirtIndex = verts->size();
+
+                        for (TopologyGraph::IndexVector::const_iterator i = boundary.begin(); i != boundary.end(); ++i)
                         {
-                            if ((*verts)[k].x() == (*i)->x() && (*verts)[k].y() == (*i)->y())
-                            {
-                                addSkirtDataForIndex(k, height);
-                                matches++;
-                                break;
-                            }
+                            addSkirtDataForIndex((*i)->index(), height);
                         }
+
+                        // then create the elements:
+                        int i;
+                        for (i = skirtIndex; i < (int)verts->size() - 2; i += 2)
+                            addSkirtTriangles(i, i + 2);
+
+                        addSkirtTriangles(i, skirtIndex);
                     }
-
-                    if (matches != boundary.size()) {
-                        OE_WARN << LC << "matches != boundary size" << std::endl;
-                    }
-
-                    int n;
-                    for (n = skirtIndex; n<(int)verts->size()-2; n+=2)
-                        addMaskSkirtTriangles(n, n+2);
-
-                    addMaskSkirtTriangles(n, skirtIndex);
-
-                    skirtCreated = true;
                 }
             }
         }
+
+        // If the boundary doesn't intersect the tile, draw the entire tile
+        // as we normally would. Need to reset the masking marker.
+        else if (r == MaskGenerator::R_BOUNDARY_DOES_NOT_INTERSECT_TILE)
+        {
+            maskSet = 0L;
+            for (osg::Vec3Array::iterator i = texCoords->begin(); i != texCoords->end(); ++i)
+                i->z() = VERTEX_MARKER_GRID;
+        }
+
+        // If the boundary contains the entire tile, draw nothing!
+        else // if (r == MaskGenerator::R_BOUNDARY_CONTAINS_ENTIRE_TILE)
+        {
+            tessellateSurface = false;
+        }
     }
 
-    if ( createSkirt && !skirtCreated )
+    // Now tessellate the (unmasked) surface.
+    
+    if (tessellateSurface)
     {
-        // SKIRTS:
-        // calculate the skirt extrusion height
-        double height = tileBound.radius() * _options.heightFieldSkirtRatio().get();
+        // TODO: do we really need this??
+        bool swapOrientation = !locator->orientationOpenGL();
+
+        for(unsigned j=0; j<tileSize-1; ++j)
+        {
+            for(unsigned i=0; i<tileSize-1; ++i)
+            {
+                int i00;
+                int i01;
+                if (swapOrientation)
+                {
+                    i01 = j*tileSize + i;
+                    i00 = i01+tileSize;
+                }
+                else
+                {
+                    i00 = j*tileSize + i;
+                    i01 = i00+tileSize;
+                }
+
+                int i10 = i00+1;
+                int i11 = i01+1;
+
+                // skip any triangles that have a discarded vertex:
+                bool discard = maskSet && (
+                    maskSet->isMasked( (*texCoords)[i00] ) ||
+                    maskSet->isMasked( (*texCoords)[i11] )
+                );
+
+                if ( !discard )
+                {
+                    discard = maskSet && maskSet->isMasked( (*texCoords)[i01] );
+                    if ( !discard )
+                    {
+                        primSet->addElement(i01);
+                        primSet->addElement(i00);
+                        primSet->addElement(i11);
+                    }
+            
+                    discard = maskSet && maskSet->isMasked( (*texCoords)[i10] );
+                    if ( !discard )
+                    {
+                        primSet->addElement(i00);
+                        primSet->addElement(i10);
+                        primSet->addElement(i11);
+                    }
+                }
+            }
+        }
+
+        // Build skirts for the tile geometry
+        if ( createSkirt )
+        {
+            // SKIRTS:
+            // calculate the skirt extrusion height
+            double height = tileBound.radius() * _options.heightFieldSkirtRatio().get();
         
-        unsigned skirtIndex = verts->size();
+            unsigned skirtIndex = verts->size();
 
-        // first, create all the skirt verts, normals, and texcoords.
-        for(int c=0; c<(int)_tileSize-1; ++c)
-            addSkirtDataForIndex( c, height ); //top
+            // first, create all the skirt verts, normals, and texcoords.
+            for(int c=0; c<(int)tileSize-1; ++c)
+                addSkirtDataForIndex( c, height ); //top
 
-        for(int r=0; r<(int)_tileSize-1; ++r)
-            addSkirtDataForIndex( r*_tileSize+(_tileSize-1), height ); //right
+            for(int r=0; r<(int)tileSize-1; ++r)
+                addSkirtDataForIndex( r*tileSize+(tileSize-1), height ); //right
     
-        for(int c=_tileSize-1; c>=0; --c)
-            addSkirtDataForIndex( (_tileSize-1)*_tileSize+c, height ); //bottom
+            for(int c=tileSize-1; c>=0; --c)
+                addSkirtDataForIndex( (tileSize-1)*tileSize+c, height ); //bottom
 
-        for(int r=_tileSize-1; r>=0; --r)
-            addSkirtDataForIndex( r*_tileSize, height ); //left
+            for(int r=tileSize-1; r>=0; --r)
+                addSkirtDataForIndex( r*tileSize, height ); //left
     
-        // then create the elements indices:
-        int i;
-        for(i=skirtIndex; i<(int)verts->size()-2; i+=2)
-            addSkirtTriangles( i, i+2 );
+            // then create the elements indices:
+            int i;
+            for(i=skirtIndex; i<(int)verts->size()-2; i+=2)
+                addSkirtTriangles( i, i+2 );
 
-        addSkirtTriangles( i, skirtIndex );
+            addSkirtTriangles( i, skirtIndex );
+        }
     }
 
-    return geom;
+    return geom.release();
 }
 
 
@@ -580,8 +619,21 @@ SharedGeometry::~SharedGeometry()
     //nop
 }
 
+bool 
+SharedGeometry::empty() const
+{
+    return
+        (_drawElements.valid() == false || _drawElements->getNumIndices() == 0) &&
+        (_maskElements.valid() == false || _maskElements->getNumIndices() == 0);
+}
+
+
 #ifdef SUPPORTS_VAO
+#if OSG_MIN_VERSION_REQUIRED(3,5,9)
+osg::VertexArrayState* SharedGeometry::createVertexArrayStateImplementation(osg::RenderInfo& renderInfo) const
+#else
 osg::VertexArrayState* SharedGeometry::createVertexArrayState(osg::RenderInfo& renderInfo) const
+#endif
 {
     osg::State& state = *renderInfo.getState();
 
@@ -667,7 +719,7 @@ void SharedGeometry::compileGLObjects(osg::RenderInfo& renderInfo) const
 
 void SharedGeometry::resizeGLObjectBuffers(unsigned int maxSize)
 {
-    Drawable::resizeGLObjectBuffers(maxSize);
+    osg::Drawable::resizeGLObjectBuffers(maxSize);
 
     osg::BufferObject* vbo = _vertexArray->getVertexBufferObject();
     if (vbo) vbo->resizeGLObjectBuffers(maxSize);
@@ -678,7 +730,7 @@ void SharedGeometry::resizeGLObjectBuffers(unsigned int maxSize)
 
 void SharedGeometry::releaseGLObjects(osg::State* state) const
 {
-    Drawable::releaseGLObjects(state);
+    osg::Drawable::releaseGLObjects(state);
 
     osg::BufferObject* vbo = _vertexArray->getVertexBufferObject();
     if (vbo) vbo->releaseGLObjects(state);
@@ -762,9 +814,12 @@ void SharedGeometry::render(GLenum primitiveType, osg::RenderInfo& renderInfo) c
     {
         /*if (request_bind_unbind)*/ state.bindElementBufferObject(ebo);
 
-        glDrawElements(primitiveType, _drawElements->getNumIndices(), _drawElements->getDataType(), (const GLvoid *)(ebo->getOffset(_drawElements->getBufferIndex())));
+        if (_drawElements->getNumIndices() > 0u)
+        {
+            glDrawElements(primitiveType, _drawElements->getNumIndices(), _drawElements->getDataType(), (const GLvoid *)(ebo->getOffset(_drawElements->getBufferIndex())));
+        }
 
-        if (_maskElements.valid())
+        if (_maskElements.valid() && _maskElements->getNumIndices() > 0u)
         {
             glDrawElements(primitiveType, _maskElements->getNumIndices(), _maskElements->getDataType(), (const GLvoid *)(ebo->getOffset(_maskElements->getBufferIndex())));
         }
@@ -773,9 +828,12 @@ void SharedGeometry::render(GLenum primitiveType, osg::RenderInfo& renderInfo) c
     }
     else
     {
-        glDrawElements(primitiveType, _drawElements->getNumIndices(), _drawElements->getDataType(), _drawElements->getDataPointer());
+        if (_drawElements->getNumIndices() > 0u)
+        {
+            glDrawElements(primitiveType, _drawElements->getNumIndices(), _drawElements->getDataType(), _drawElements->getDataPointer());
+        }
 
-        if (_maskElements.valid())
+        if (_maskElements.valid() && _maskElements->getNumIndices() > 0u)
         {
             glDrawElements(primitiveType, _maskElements->getNumIndices(), _maskElements->getDataType(), _maskElements->getDataPointer());
         }
@@ -820,3 +878,20 @@ void SharedGeometry::accept(osg::PrimitiveIndexFunctor& pif) const
     _drawElements->accept(pif);
 }
 
+osg::Geometry*
+SharedGeometry::makeOsgGeometry()
+{
+    osg::Geometry* geom = new osg::Geometry();
+    geom->setUseVertexBufferObjects(true);
+    geom->setUseDisplayList(false);
+
+    geom->setVertexArray(getVertexArray());
+    geom->setNormalArray(getNormalArray());
+    geom->setTexCoordArray(0, getTexCoordArray());
+    if (getDrawElements())
+        geom->addPrimitiveSet(getDrawElements());
+    if (getMaskElements())
+        geom->addPrimitiveSet(getMaskElements());
+
+    return geom;
+}

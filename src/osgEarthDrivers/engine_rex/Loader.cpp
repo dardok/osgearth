@@ -21,6 +21,8 @@
 
 #include <osgEarth/Registry>
 #include <osgEarth/Utils>
+#include <osgEarth/NodeUtils>
+#include <osgEarth/Metrics>
 
 #include <osgDB/FileNameUtils>
 #include <osgDB/FileUtils>
@@ -42,17 +44,6 @@ Loader::Request::Request()
     _priority = 0;
     _lastFrameSubmitted = 0;
     _lastTick = 0;
-}
-
-osg::StateSet*
-Loader::Request::getStateSet()
-{
-    if ( !_stateSet.valid() )
-    {
-        _stateSet = new osg::StateSet();
-        _stateSet->setDataVariance( osg::Object::DYNAMIC );
-    }
-    return _stateSet.get();
 }
 
 void
@@ -81,11 +72,18 @@ SimpleLoader::load(Loader::Request* request, float priority, osg::NodeVisitor& n
         // take a reference, which will cause an unref after load.
         osg::ref_ptr<Request> r = request;
 
+        r->setState(Request::RUNNING);
+
         //OE_INFO << LC << "Request invoke : UID = " << request->getUID() << "\n";
         request->invoke();
         
         //OE_INFO << LC << "Request apply : UID = " << request->getUID() << "\n";
-        request->apply( nv.getFrameStamp() );
+        if (r->isRunning())
+        {
+            request->apply( nv.getFrameStamp() );
+        }
+
+        r->setState(Request::IDLE);
     }
     return request != 0L;
 }
@@ -156,8 +154,9 @@ namespace
 
 namespace
 {
-    struct RequestResultNode : public osg::Node
+    class RequestResultNode : public osg::Node
     {
+    public:
         RequestResultNode(Loader::Request* request)
             : _request(request)
         {
@@ -167,7 +166,7 @@ namespace
             {
                 // TODO: for some reason pre-compiling is causing texture flashing issues 
                 // with things like classification maps when using --ico. Figure out why.
-                setStateSet( _request->getStateSet() );
+                setStateSet( _request->createStateSet() );
             }
         }
 
@@ -210,6 +209,8 @@ PagerLoader::setMergesPerFrame(int value)
 {
     _mergesPerFrame = std::max(value, 0);
     this->setNumChildrenRequiringUpdateTraversal( 1 );
+    OE_INFO << LC << "Merges per frame = " << _mergesPerFrame << std::endl;
+    
 }
 
 void
@@ -230,7 +231,6 @@ bool
 PagerLoader::load(Loader::Request* request, float priority, osg::NodeVisitor& nv)
 {
     // check that the request is not already completed but unmerged:
-    //if ( request && !request->isMerging() && nv.getDatabaseRequestHandler() )
     if ( request && !request->isMerging() && !request->isFinished() && nv.getDatabaseRequestHandler() )
     {
         //OE_INFO << LC << "load (" << request->getTileKey().str() << ")" << std::endl;
@@ -310,24 +310,31 @@ PagerLoader::traverse(osg::NodeVisitor& nv)
             setFrameStamp(nv.getFrameStamp());
         }
 
-        int count;
-        for(count=0; count < _mergesPerFrame && !_mergeQueue.empty(); ++count)
+        // process pending merges.
         {
-            Request* req = _mergeQueue.begin()->get();
-            if ( req && req->_lastTick >= _checkpoint )
+            METRIC_BEGIN("loader.merge");
+            int count;
+            for(count=0; count < _mergesPerFrame && !_mergeQueue.empty(); ++count)
             {
-                OE_START_TIMER(req_apply);
-                req->apply( getFrameStamp() );
-                double s = OE_STOP_TIMER(req_apply);
+                Request* req = _mergeQueue.begin()->get();
+                if ( req && req->_lastTick >= _checkpoint )
+                {
+                    OE_START_TIMER(req_apply);
+                    req->apply( getFrameStamp() );
+                    double s = OE_STOP_TIMER(req_apply);
 
-                req->setState(Request::FINISHED);
+                    req->setState(Request::FINISHED);
+                }
+
+                _mergeQueue.erase( _mergeQueue.begin() );
             }
-
-            _mergeQueue.erase( _mergeQueue.begin() );
+            METRIC_END("loader.merge");
         }
 
         // cull finished requests.
         {
+            METRIC_SCOPED("loader.cull");
+
             Threading::ScopedMutexLock lock( _requestsMutex );
 
             unsigned fn = 0;
@@ -393,7 +400,9 @@ PagerLoader::addChild(osg::Node* node)
         Request* req = result->getRequest();
         if ( req )
         {
-            if ( req->_lastTick >= _checkpoint )
+            // Make sure the request is both current (newer than the last checkpoint)
+            // and running (i.e. has not been canceled along the way)
+            if (req->_lastTick >= _checkpoint && req->isRunning())
             {
                 if ( _mergesPerFrame > 0 )
                 {
@@ -411,6 +420,7 @@ PagerLoader::addChild(osg::Node* node)
 
             else
             {
+                OE_DEBUG << LC << "Request " << req->getName() << " canceled" << std::endl;
                 req->setState( Request::FINISHED );
                 if ( REPORT_ACTIVITY )
                     Registry::instance()->endActivity( req->getName() );
@@ -506,8 +516,13 @@ namespace osgEarth { namespace Drivers { namespace RexTerrainEngine
                 osg::ref_ptr<PagerLoader> loader;
                 if (OptionsData<PagerLoader>::lock(dboptions, "osgEarth.PagerLoader", loader))
                 {
-                    Loader::Request* req = loader->invokeAndRelease( requestUID );
-                    return new RequestResultNode(req);
+                    osg::ref_ptr<Loader::Request> req = loader->invokeAndRelease( requestUID );
+
+                    // make sure the request is still running (not canceled)
+                    if (req.valid() && req->isRunning())
+                        return new RequestResultNode(req.release());
+                    else
+                        return ReadResult::FILE_NOT_FOUND;
                 }
                 return ReadResult::FILE_NOT_FOUND;
             }

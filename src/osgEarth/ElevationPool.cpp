@@ -53,10 +53,7 @@ _tileSize( 257u )
 
 ElevationPool::~ElevationPool()
 {
-    _opQueue->releaseAllOperations();
-
-    for (unsigned i = 0; i<_opThreads.size(); ++i)
-        _opThreads[i]->setDone(true);
+    stopThreading();
 }
 
 void
@@ -72,6 +69,15 @@ ElevationPool::clear()
 {
     Threading::ScopedMutexLock lock(_tilesMutex);
     clearImpl();
+}
+
+void
+ElevationPool::stopThreading()
+{
+    _opQueue->releaseAllOperations();
+    
+    for (unsigned i = 0; i<_opThreads.size(); ++i)
+    _opThreads[i]->setDone(true);
 }
 
 void
@@ -140,7 +146,7 @@ ElevationPool::fetchTileFromMap(const TileKey& key, MapFrame& frame, Tile* tile)
         else
         {
             OE_TEST << LC << "Populating from layers (" << keyToUse.str() << ")\n";
-            ok = _layers.populateHeightFieldAndNormalMap(hf, 0L, keyToUse, 0L, INTERP_BILINEAR, 0L);
+            ok = _layers.populateHeightFieldAndNormalMap(hf.get(), 0L, keyToUse, 0L, INTERP_BILINEAR, 0L);
         }
 
         if (ok)
@@ -301,7 +307,7 @@ ElevationPool::getTile(const TileKey& key, MapFrame& frame, osg::ref_ptr<Elevati
     if ( !tile.valid() && OE_GET_TIMER(get) >= timeout )
     {
         // this means we timed out trying to fetch the map tile.
-        OE_TEST << LC << "Timout fetching tile " << key.str() << std::endl;
+        OE_TEST << LC << "Timeout fetching tile " << key.str() << std::endl;
     }
 
     if ( tile.valid() )
@@ -353,7 +359,7 @@ ElevationEnvelope::sample(double x, double y, float& out_elevation, float& out_r
     out_resolution = 0.0f;
     bool foundTile = false;
 
-    GeoPoint p(_inputSRS, x, y, 0.0f, ALTMODE_ABSOLUTE);
+    GeoPoint p(_inputSRS.get(), x, y, 0.0f, ALTMODE_ABSOLUTE);
 
     if (p.transformInPlace(_frame.getProfile()->getSRS()))
     {
@@ -467,8 +473,6 @@ ElevationEnvelope::getElevationExtrema(const std::vector<osg::Vec3d>& input,
         return false;
 
     min = FLT_MAX, max = -FLT_MAX;
-
-    unsigned count = 0;
 
     osg::Vec3d centroid;
 

@@ -262,7 +262,7 @@ namespace
 
 
     /**
-     * Handler to toggle "viewpoint transtion arcing", which causes the camera to "arc"
+     * Handler to toggle "viewpoint transition arcing", which causes the camera to "arc"
      * as it travels from one viewpoint to another.
      */
     struct ToggleArcViewpointTransitionsHandler : public osgGA::GUIEventHandler
@@ -536,20 +536,12 @@ namespace
             _points.push_back(GeoPoint(srs, -100, 45, 0));
         }
 
-        // Projects a point in view space onto the far clip plane of a projection matrix
-        void projectToFarPlane(osg::Vec3d& Pview, const osg::Matrix& projMatrix, const osg::Matrix& projMatrixInv)
-        {
-            osg::Vec4d Pclip = osg::Vec4d(Pview.x(), Pview.y(), Pview.z(), 1.0)* projMatrix;
-            Pclip.z() = Pclip.w();
-            osg::Vec4d Ptemp = Pclip * projMatrixInv;
-            Pview.set(Ptemp.x() / Ptemp.w(), Ptemp.y() / Ptemp.w(), Ptemp.z() / Ptemp.w());
-        }
-
         bool handle(const osgGA::GUIEventAdapter& ea, osgGA::GUIActionAdapter& aa)
         {
             if (ea.getEventType() == ea.KEYDOWN && ea.getKey() == _key)
             {
                 ViewFitter fitter(_mapSRS, aa.asView()->getCamera());
+                fitter.setBuffer( 100000.0 );
                 Viewpoint vp;
                 if (fitter.createViewpoint(_points, vp))
                 {
@@ -689,23 +681,23 @@ int main(int argc, char** argv)
     osgEarth::MapNode* mapNode = osgEarth::MapNode::findMapNode( earthNode );
 
     // user model?
-    osg::Node* model = 0L;
+    osg::ref_ptr<osg::Node> model;
     std::string modelFile;
     if (arguments.read("--model", modelFile))
-        model = osgDB::readNodeFile(modelFile + ".osgearth_shadergen");
+        model = osgDB::readRefNodeFile(modelFile + ".osgearth_shadergen");
 
     osg::Group* sims = new osg::Group();
     root->addChild( sims );
 
     // Simulator for tethering:
-    Simulator* sim1 = new Simulator(sims, manip, mapNode, model, "Thing 1", '8');
+    Simulator* sim1 = new Simulator(sims, manip, mapNode, model.get(), "Thing 1", '8');
     sim1->_lat0 = 55.0;
     sim1->_lon0 = 45.0;
     sim1->_lat1 = -55.0;
     sim1->_lon1 = -45.0;
     viewer.addEventHandler(sim1);
 
-    Simulator* sim2 = new Simulator(sims, manip, mapNode, model, "Thing 2", '9');
+    Simulator* sim2 = new Simulator(sims, manip, mapNode, model.get(), "Thing 2", '9');
     sim2->_name = "Thing 2";
     sim2->_lat0 = 54.0;
     sim2->_lon0 = 45.0;
@@ -731,6 +723,11 @@ int main(int argc, char** argv)
         EarthManipulator::ACTION_EARTH_DRAG,
         osgGA::GUIEventAdapter::LEFT_MOUSE_BUTTON,
         osgGA::GUIEventAdapter::MODKEY_SHIFT );
+
+    manip->getSettings()->bindMouseClick(
+        EarthManipulator::ACTION_GOTO,
+        osgGA::GUIEventAdapter::LEFT_MOUSE_BUTTON,
+        osgGA::GUIEventAdapter::MODKEY_SHIFT);
 
     manip->getSettings()->setArcViewpointTransitions( true );    
 

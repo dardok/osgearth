@@ -42,6 +42,7 @@
 #include <osgEarth/ScreenSpaceLayout>
 #include <osgEarth/TerrainEngineNode>
 #include <osgEarth/NodeUtils>
+#include <osgEarth/FileUtils>
 
 #include <osgEarth/XmlUtils>
 #include <osgEarth/StringUtils>
@@ -269,7 +270,7 @@ MapNodeHelper::load(osg::ArgumentParser&  args,
     myReadOptions->setPluginStringData("osgEarth.defaultOptions", defMNO.getConfig().toJSON());
 
     // read in the Earth file:
-    osg::Node* node = osgDB::readNodeFiles(args, myReadOptions.get());
+    osg::ref_ptr<osg::Node> node = osgDB::readNodeFiles(args, myReadOptions.get());
 
     osg::ref_ptr<MapNode> mapNode;
     if ( !node )
@@ -286,7 +287,7 @@ MapNodeHelper::load(osg::ArgumentParser&  args,
     }
     else
     {
-        mapNode = MapNode::get(node);
+        mapNode = MapNode::get(node.get());
         if ( !mapNode.valid() )
         {
             OE_WARN << LC << "Loaded scene graph does not contain a MapNode - aborting" << std::endl;
@@ -483,6 +484,14 @@ MapNodeHelper::parse(MapNode*             mapNode,
     // Configure for an ortho camera:
     if ( args.read("--ortho") )
     {
+        EarthManipulator* em = dynamic_cast<EarthManipulator*>(view->getCameraManipulator());
+        if (em)
+        {
+            double V, A, N, F;
+            view->getCamera()->getProjectionMatrixAsPerspective(V, A, N, F);
+            em->setInitialVFOV( V );
+        }
+
         view->getCamera()->setProjectionMatrixAsOrtho(-1, 1, -1, 1, 0, 1);
     }
 
@@ -645,7 +654,7 @@ MapNodeHelper::parse(MapNode*             mapNode,
             ShadowCaster* caster = new ShadowCaster();
             caster->setTextureImageUnit( unit );
             caster->setLight( view->getLight() );
-            caster->getShadowCastingGroup()->addChild( mapNode->getModelLayerGroup() );
+            caster->getShadowCastingGroup()->addChild( mapNode->getLayerNodeGroup() );
             caster->getShadowCastingGroup()->addChild(mapNode->getTerrainEngine());
             if ( mapNode->getNumParents() > 0 )
             {
@@ -754,7 +763,8 @@ namespace
 
         void onValueChanged(ui::Control* control, float value )
         {
-            _sky->setMinimumAmbient(osg::Vec4(value,value,value,1));
+            if (_sky->getSunLight())
+                _sky->getSunLight()->setAmbient(osg::Vec4(value,value,value,1));
         }
     };
 }
@@ -781,7 +791,7 @@ ui::Control* SkyControlFactory::create(SkyNode* sky)
         grid->setControl( 0, r, new ui::LabelControl("Month: ", 16) );
         ui::HSliderControl* skyMonthSlider = grid->setControl(1, r, new ui::HSliderControl( 0.0f, 12.0f, dt.month() ));
         skyMonthSlider->setHorizFill( true, 250 );
-        ui::LabelControl* monthLabel = grid->setControl(2, r, new ui::LabelControl(s_month[dt.month()]));
+        ui::LabelControl* monthLabel = grid->setControl(2, r, new ui::LabelControl(s_month[dt.month()-1]));
         skyMonthSlider->addEventHandler( new SkyMonthSlider(sky, monthLabel) );
     
         ++r;

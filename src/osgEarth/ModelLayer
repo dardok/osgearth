@@ -21,7 +21,6 @@
 #define OSGEARTH_MODEL_LAYER_H 1
 
 #include <osgEarth/Common>
-#include <osgEarth/AlphaEffect>
 #include <osgEarth/VisibleLayer>
 #include <osgEarth/Cache>
 #include <osgEarth/Config>
@@ -75,12 +74,6 @@ namespace osgEarth
         const optional<bool>& lightingEnabled() const { return _lighting; }
 
         /**
-         * The opacity of this layer
-         */
-        optional<float>& opacity() { return _opacity; }
-        const optional<float>& opacity() const { return _opacity; }
-
-        /**
          * Masking options for cutting a hole in the terrain to accommodate this model.
          * Note; the mask will NOT honor any visibility or opacity settings on the
          * model layer.
@@ -111,7 +104,6 @@ namespace osgEarth
         void setDefaults();
 
         optional<ModelSourceOptions> _driver;
-        optional<float>              _opacity;
         optional<bool>               _lighting;
         optional<MaskSourceOptions>  _maskOptions;
         optional<unsigned>           _maskMinLevel;
@@ -122,12 +114,14 @@ namespace osgEarth
 
     struct ModelLayerCallback : public VisibleLayerCallback
     {
-        virtual void onOpacityChanged(class ModelLayer* layer) { }
-
+        // Nothing - placeholder
         typedef void (ModelLayerCallback::*MethodPtr)(class ModelLayer* layer);
     };
 
 
+    /**
+     * Layer that contains an OSG scene graph
+     */
     class OSGEARTH_EXPORT ModelLayer : public VisibleLayer
     {
     public:
@@ -210,26 +204,11 @@ namespace osgEarth
          */
         osg::Node* getSceneGraph(const UID& mapUID) const;
 
-    public: // deprecated
-        
-        /** @deprecated */
-        osg::Node* getOrCreateSceneGraph( 
-            const Map*            map, 
-            const osgDB::Options* readOptions,
-            ProgressCallback*     progress ) { return getOrCreateSceneGraph(map, progress); }
-
     public: // properties
 
         /** whether to apply lighting to the model layer's root node */
         void setLightingEnabled( bool value );
         bool isLightingEnabled() const;
-
-        /**
-         * Sets the opacity of this image layer.
-         * @param opacity Opacity [0..1] -> [transparent..opaque]
-         */
-        void setOpacity( float opacity );
-        float getOpacity() const;
 
     public: // Layer
 
@@ -239,14 +218,11 @@ namespace osgEarth
         /** Serialize this layer */
         virtual Config getConfig() const;
 
-        /** Node creates by this model layer */
+        /** Node created by this model layer */
         virtual osg::Node* getOrCreateNode();
 
-        /**
-         * Sets the read options for this layer to user; this includes
-         * Cache and CachePolicy information potentially.
-         */
-        virtual void setReadOptions(const osgDB::Options* readOptions);
+        //! Generate a cache ID for this layer
+        virtual std::string getCacheID() const;
 
     protected:
 
@@ -261,12 +237,11 @@ namespace osgEarth
         osg::ref_ptr<ModelSource>     _modelSource;
         osg::ref_ptr<MaskSource>      _maskSource;
         Revision                      _modelSourceRev;
-        osg::ref_ptr<AlphaEffect>     _alphaEffect;
         osg::ref_ptr<osg::Vec3dArray> _maskBoundary;
         osg::ref_ptr<CacheSettings>   _cacheSettings;
         osg::ref_ptr<SceneGraphCallbacks> _sgCallbacks;
 
-        typedef fast_map<UID, osg::observer_ptr<osg::Node> > Graphs;
+        typedef fast_map<UID, osg::ref_ptr<osg::Node> > Graphs;
         Graphs _graphs;
 
         mutable Threading::Mutex _mutex; // general-purpose mutex.

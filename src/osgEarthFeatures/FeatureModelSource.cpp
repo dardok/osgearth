@@ -24,12 +24,17 @@
 #include <osgEarth/Registry>
 #include <osgEarth/Capabilities>
 #include <osgEarth/DrapeableNode>
+#include <osgEarth/ClampableNode>
 #include <osgEarth/Lighting>
 #include <osg/Notify>
 
 using namespace osgEarth;
 using namespace osgEarth::Features;
 using namespace osgEarth::Symbology;
+
+#ifndef GL_CLIP_DISTANCE0
+#define GL_CLIP_DISTANCE0 0x3000
+#endif
 
 #define LC "[FeatureModelSource] "
 
@@ -54,7 +59,6 @@ FeatureModelOptions::fromConfig(const Config& conf)
 
     conf.getObjIfSet( "styles",           _styles );
     conf.getObjIfSet( "layout",           _layout );
-    conf.getObjIfSet( "paging",           _layout ); // backwards compat.. to be deprecated
     conf.getObjIfSet( "fading",           _fading );
     conf.getObjIfSet( "feature_name",     _featureNameExpr );
     conf.getObjIfSet( "feature_indexing", _featureIndexing );
@@ -119,7 +123,6 @@ FeatureModelSourceOptions::fromConfig( const Config& conf )
     
     conf.getObjIfSet( "styles",           _styles );
     conf.getObjIfSet( "layout",           _layout );
-    conf.getObjIfSet( "paging",           _layout ); // backwards compat.. to be deprecated
     conf.getObjIfSet( "fading",           _fading );
     conf.getObjIfSet( "feature_name",     _featureNameExpr );
     conf.getObjIfSet( "feature_indexing", _featureIndexing );
@@ -310,6 +313,13 @@ FeatureNodeFactory::getOrCreateStyleGroup(const Style& style,
         group = new DrapeableNode();
     }
 
+    else if (alt &&
+        alt->clamping() == alt->CLAMP_TO_TERRAIN &&
+        alt->technique() == alt->TECHNIQUE_GPU)
+    {
+        group = new ClampableNode();
+    }
+
     // Otherwise, a normal group.
     if ( !group )
     {
@@ -350,10 +360,10 @@ FeatureNodeFactory::getOrCreateStyleGroup(const Style& style,
                 (render->backfaceCulling() == true ? osg::StateAttribute::ON : osg::StateAttribute::OFF) | osg::StateAttribute::OVERRIDE );
         }
 
-#if !(defined(OSG_GLES2_AVAILABLE) || defined(OSG_GLES3_AVAILABLE) || defined(OSG_GL3_AVAILABLE) )
+#if !(defined(OSG_GLES2_AVAILABLE) || defined(OSG_GLES3_AVAILABLE))
         if ( render->clipPlane().isSet() )
         {
-            GLenum mode = GL_CLIP_PLANE0 + (render->clipPlane().value());
+            GLenum mode = GL_CLIP_DISTANCE0 + (render->clipPlane().value());
             group->getOrCreateStateSet()->setMode(mode, 1);
         }
 #endif

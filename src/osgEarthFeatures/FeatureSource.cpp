@@ -20,6 +20,7 @@
 #include <osgEarthFeatures/ResampleFilter>
 #include <osgEarthFeatures/BufferFilter>
 #include <osgEarthFeatures/ConvertTypeFilter>
+#include <osgEarthFeatures/FilterContext>
 #include <osgEarth/Registry>
 #include <osg/Notify>
 #include <osgDB/ReadFile>
@@ -123,7 +124,10 @@ FeatureSource::open(const osgDB::Options* readOptions)
         FeatureFilter* filter = FeatureFilterRegistry::instance()->create( conf.getConfig(), 0L );
         if ( filter )
         {
-            _filters.push_back( filter );
+            if (_filters.valid() == false)
+                _filters = new FeatureFilterChain();
+
+            _filters->push_back( filter );
             filter->initialize( readOptions );
         }
     }
@@ -138,10 +142,16 @@ FeatureSource::setFeatureProfile(const FeatureProfile* fp)
     _featureProfile = fp;
 }
 
-const FeatureFilterList&
+const FeatureFilterChain*
 FeatureSource::getFilters() const
 {
-    return _filters;
+    return _filters.get();
+}
+
+FeatureCursor*
+FeatureSource::createFeatureCursor()
+{
+    return createFeatureCursor(Symbology::Query());
 }
 
 const FeatureSchema&
@@ -183,12 +193,12 @@ void
 FeatureSource::applyFilters(FeatureList& features, const GeoExtent& extent) const
 {
     // apply filters before returning.
-    if ( !getFilters().empty() )
+    if (_filters.valid() && _filters->empty() == false)
     {
         FilterContext cx;
         cx.setProfile( getFeatureProfile() );
         cx.extent() = extent;
-        for(FeatureFilterList::const_iterator filter = getFilters().begin(); filter != getFilters().end(); ++filter)
+        for(FeatureFilterChain::const_iterator filter = _filters->begin(); filter != _filters->end(); ++filter)
         {
             cx = filter->get()->push( features, cx );
         }
@@ -204,7 +214,7 @@ FeatureSource::applyFilters(FeatureList& features, const GeoExtent& extent) cons
 FeatureSource*
 FeatureSourceFactory::create( const FeatureSourceOptions& options )
 {
-    FeatureSource* featureSource = 0L;
+    osg::ref_ptr<FeatureSource> source;
 
     if ( !options.getDriver().empty() )
     {
@@ -213,13 +223,14 @@ FeatureSourceFactory::create( const FeatureSourceOptions& options )
         osg::ref_ptr<osgDB::Options> rwopts = Registry::instance()->cloneOrCreateOptions();
         rwopts->setPluginData( FEATURE_SOURCE_OPTIONS_TAG, (void*)&options );
 
-        featureSource = dynamic_cast<FeatureSource*>( osgDB::readObjectFile( driverExt, rwopts.get() ) );
-        if ( featureSource )
+        osg::ref_ptr<osg::Object> object = osgDB::readRefObjectFile( driverExt, rwopts.get() );
+        source = dynamic_cast<FeatureSource*>( object.release() );
+        if ( source )
         {
             if ( options.name().isSet() )
-                featureSource->setName( *options.name() );
+                source->setName( *options.name() );
             else
-                featureSource->setName( options.getDriver() );
+                source->setName( options.getDriver() );
         }
         else
         {
@@ -231,7 +242,7 @@ FeatureSourceFactory::create( const FeatureSourceOptions& options )
         OE_WARN << LC << "ILLEGAL null feature driver name" << std::endl;
     }
 
-    return featureSource;
+    return source.release();
 }
 
 //------------------------------------------------------------------------

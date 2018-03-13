@@ -32,6 +32,7 @@
 #include <osgEarth/GeoMath>
 #include <osgEarth/ScreenSpaceLayout>
 #include <osgEarth/NodeUtils>
+#include <osgEarth/Lighting>
 
 #include <osg/Depth>
 #include <osgText/Text>
@@ -44,6 +45,7 @@ using namespace osgEarth::Features;
 using namespace osgEarth::Symbology;
 
 PlaceNode::PlaceNode() :
+_geode            ( 0L ),
 _labelRotationRad ( 0. ),
 _followFixedCourse( false )
 {
@@ -91,6 +93,7 @@ PlaceNode::PlaceNode(MapNode*              mapNode,
 GeoPositionNode ( mapNode ),
 _style    ( style ),
 _dbOptions        ( dbOptions ),
+_geode            ( 0L ),
 _labelRotationRad ( 0. ),
 _followFixedCourse( false )
 {
@@ -101,7 +104,13 @@ _followFixedCourse( false )
 void
 PlaceNode::init()
 {
-    ScreenSpaceLayout::activate( this->getOrCreateStateSet() );
+    osg::StateSet* ss = this->getOrCreateStateSet();
+
+    // Draw place nodes in screen space.
+    ScreenSpaceLayout::activate(ss);
+
+    // Disable lighting for place nodes by default
+    ss->setDefine(OE_LIGHTING_DEFINE, osg::StateAttribute::OFF);
 
     osgEarth::clearChildren( getPositionAttitudeTransform() );
 
@@ -138,12 +147,6 @@ PlaceNode::init()
     }
 
     osg::ref_ptr<const InstanceSymbol> instance = _style.get<InstanceSymbol>();
-
-    // backwards compability, support for deprecated MarkerSymbol
-    if ( !instance.valid() && _style.has<MarkerSymbol>() )
-    {
-        instance = _style.get<MarkerSymbol>()->convertToInstanceSymbol();
-    }
 
     const IconSymbol* icon = instance->asIcon();
 
@@ -365,7 +368,7 @@ PlaceNode::updateLayoutData()
 void
 PlaceNode::setText( const std::string& text )
 {
-    if ( !_dynamic )
+    if ( !_dynamic && !_geode )
     {
         OE_WARN << LC << "Illegal state: cannot change a LabelNode that is not dynamic" << std::endl;
         return;
@@ -373,20 +376,23 @@ PlaceNode::setText( const std::string& text )
 
     _text = text;
 
-    for(unsigned i=0; i<_geode->getNumDrawables(); ++i)
+    if (_geode)
     {
-        osgText::Text* d = dynamic_cast<osgText::Text*>( _geode->getDrawable(i) );
-        if ( d )
+        for(unsigned i=0; i<_geode->getNumDrawables(); ++i)
         {
-			TextSymbol* symbol =  _style.getOrCreate<TextSymbol>();
-			osgText::String::Encoding text_encoding = osgText::String::ENCODING_UNDEFINED;
-			if ( symbol && symbol->encoding().isSet() )
-			{
-				text_encoding = AnnotationUtils::convertTextSymbolEncoding(symbol->encoding().value());
-			}
+            osgText::Text* d = dynamic_cast<osgText::Text*>( _geode->getDrawable(i) );
+            if ( d )
+            {
+			    TextSymbol* symbol =  _style.getOrCreate<TextSymbol>();
+			    osgText::String::Encoding text_encoding = osgText::String::ENCODING_UNDEFINED;
+			    if ( symbol && symbol->encoding().isSet() )
+			    {
+				    text_encoding = AnnotationUtils::convertTextSymbolEncoding(symbol->encoding().value());
+			    }
 
-            d->setText( text, text_encoding );
-            break;
+                d->setText( text, text_encoding );
+                break;
+            }
         }
     }
 }
@@ -415,10 +421,13 @@ PlaceNode::setDynamic( bool value )
 {
     GeoPositionNode::setDynamic( value );
     
-    for(unsigned i=0; i<_geode->getNumDrawables(); ++i)
+    if (_geode)
     {
-        _geode->getDrawable(i)->setDataVariance( 
-            value ? osg::Object::DYNAMIC : osg::Object::STATIC );
+        for(unsigned i=0; i<_geode->getNumDrawables(); ++i)
+        {
+            _geode->getDrawable(i)->setDataVariance( 
+                value ? osg::Object::DYNAMIC : osg::Object::STATIC );
+        }
     }
 }
 

@@ -83,14 +83,14 @@ main(int argc, char** argv)
 
     // Group to hold all our annotation elements.
     osg::Group* annoGroup = new osg::Group();
-    root->addChild( annoGroup );
+    MapNode::get(node)->addChild( annoGroup );
 
     // Make a group for labels
     osg::Group* labelGroup = new osg::Group();
     annoGroup->addChild( labelGroup );
 
     osg::Group* editGroup = new osg::Group();
-    root->addChild( editGroup );
+    MapNode::get(node)->addChild( editGroup );
 
     // Style our labels:
     Style labelStyle;
@@ -132,7 +132,16 @@ main(int argc, char** argv)
     //--------------------------------------------------------------------
 
     // a box that follows lines of latitude (rhumb line interpolation, the default)
+    // and flashes on and off using a cull callback.
     {
+        struct C : public osg::NodeCallback {
+            void operator()(osg::Node* n, osg::NodeVisitor* nv) {
+                static int i=0;
+                i++;
+                if (i % 100 < 50)
+                    traverse(n, nv);
+            }
+        };
         Geometry* geom = new Polygon();
         geom->push_back( osg::Vec3d(0,   40, 0) );
         geom->push_back( osg::Vec3d(-60, 40, 0) );
@@ -150,7 +159,9 @@ main(int argc, char** argv)
         geomStyle.getOrCreate<AltitudeSymbol>()->technique() = AltitudeSymbol::TECHNIQUE_GPU;
         
         FeatureNode* fnode = new FeatureNode(mapNode, feature, geomStyle);
-        
+
+        fnode->addCullCallback(new C());
+
         annoGroup->addChild( fnode );
 
         labelGroup->addChild( new LabelNode(mapNode, GeoPoint(geoSRS,-30, 50), "Rhumb line polygon", labelStyle) );
@@ -205,6 +216,7 @@ main(int argc, char** argv)
         pathStyle.getOrCreate<PointSymbol>()->fill()->color() = Color::Red;
         pathStyle.getOrCreate<AltitudeSymbol>()->clamping() = AltitudeSymbol::CLAMP_TO_TERRAIN;
         pathStyle.getOrCreate<AltitudeSymbol>()->technique() = AltitudeSymbol::TECHNIQUE_GPU;
+        pathStyle.getOrCreate<RenderSymbol>()->depthOffset()->enabled() = true;
 
         //OE_INFO << "Path extent = " << pathFeature->getExtent().toString() << std::endl;
 
@@ -328,6 +340,7 @@ main(int argc, char** argv)
 
         Feature*     utahFeature = new Feature(utah, geoSRS);
         FeatureNode* featureNode = new FeatureNode(mapNode, utahFeature, utahStyle);
+
         annoGroup->addChild( featureNode );
     }
 
@@ -336,10 +349,10 @@ main(int argc, char** argv)
     // an image overlay.
     {
         ImageOverlay* imageOverlay = 0L;
-        osg::Image* image = osgDB::readImageFile( "../data/USFLAG.TGA" );
-        if ( image )
+        osg::ref_ptr<osg::Image> image = osgDB::readRefImageFile( "../data/USFLAG.TGA" );
+        if (image.valid())
         {
-            imageOverlay = new ImageOverlay(mapNode, image);
+            imageOverlay = new ImageOverlay(mapNode, image.get());
             imageOverlay->setBounds( Bounds( -100.0, 35.0, -90.0, 40.0) );
             annoGroup->addChild( imageOverlay );
 

@@ -191,10 +191,6 @@ Control::init()
 
     _geode = new osg::Geode();
     this->addChild( _geode );
-    
-#if defined(OSG_GLES2_AVAILABLE) || defined(OSG_GLES3_AVAILABLE)
-    _alphaEffect = new AlphaEffect(this->getOrCreateStateSet());
-#endif
 }
 
 void
@@ -423,6 +419,12 @@ Control::parentIsVisible() const
     return visible;
 }
 
+void
+Control::setOpacity(float a) {
+    osg::Vec4f c = _foreColor.get();
+    c.a() = a;
+    setForeColor(c);
+}
 
 void
 Control::setForeColor( const osg::Vec4f& value ) {
@@ -2312,7 +2314,7 @@ ControlCanvas::EventCallback::handleResize(osg::View* view, ControlCanvas* canva
             if ( !gc && view->getNumSlaves() > 0 )
                 gc = view->getSlave(0)._camera->getGraphicsContext();
 
-            if ( gc )
+            if ( gc && gc->getState() )
                 cx._viewContextID = gc->getState()->getContextID();
             else
                 cx._viewContextID = ~0u;
@@ -2455,9 +2457,6 @@ ControlNodeBin::setFading( bool value )
 void
 ControlNodeBin::draw( const ControlContext& context, bool newContext, int bin )
 {
-    const osg::Viewport* vp = context._vp.get();
-    osg::Vec2f surfaceSize( context._vp->width(), context._vp->height() );
-
     // we don't really need to keep this list in the object, but that prevents it from having to
     // reallocate it each time
     _taken.clear();
@@ -2742,7 +2741,7 @@ ControlCanvas::init()
     _controlNodeBin = new ControlNodeBin();
     this->addChild( _controlNodeBin->getControlGroup() );
    
-#if defined(OSG_GL_FIXED_FUNCTION_AVAILABLE)
+#if OSG_VERSION_LESS_THAN(3,5,8) && defined(OSG_GL_FIXED_FUNCTION_AVAILABLE)
     // don't use shaders unless we have to.
     this->getOrCreateStateSet()->setAttributeAndModes(
         new osg::Program(), 

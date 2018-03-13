@@ -178,6 +178,7 @@ Config
 StyleSheet::getConfig() const
 {
     Config conf;
+    conf.set("name", _name);
 
     for( StyleSelectorList::const_iterator i = _selectors.begin(); i != _selectors.end(); ++i )
     {
@@ -226,13 +227,19 @@ StyleSheet::getConfig() const
 void
 StyleSheet::mergeConfig( const Config& conf )
 {
+    conf.getIfSet("name", _name);
+
     _uriContext = URIContext( conf.referrer() );
 
     // read in any resource library references
     ConfigSet libraries = conf.children( "library" );
     for( ConfigSet::iterator i = libraries.begin(); i != libraries.end(); ++i )
     {
-        ResourceLibrary* resLib = new ResourceLibrary( *i );
+        const Config& libConf = *i;
+        ResourceLibrary* resLib = new ResourceLibrary( libConf );
+        if (resLib && libConf.value("name").empty() == false)
+            resLib->setName(libConf.value("name"));
+
         _resLibs[resLib->getName()] = resLib;
     }
 

@@ -25,10 +25,11 @@ using namespace osgEarth::Drivers::RexTerrainEngine;
 
 
 LayerDrawable::LayerDrawable() :
-_renderType(Layer::RENDERTYPE_TILE),
+_renderType(Layer::RENDERTYPE_TERRAIN_SURFACE),
 _order(0),
 _layer(0L),
-_clearOsgState(false)
+_clearOsgState(false),
+_draw(true)
 {
     setDataVariance(DYNAMIC);
     setUseDisplayList(false);
@@ -38,22 +39,19 @@ _clearOsgState(false)
 void
 LayerDrawable::drawImplementation(osg::RenderInfo& ri) const
 {
+    //OE_INFO << LC << (_layer ? _layer->getName() : "[empty]") << " tiles=" << _tiles.size() << std::endl;
+
     // Get this context's state values:
     PerContextDrawState& ds = _drawState->getPCDS(ri.getContextID());
 
     ds.refresh(ri, _drawState->_bindings);
 
-    if (ds._layerOrderUL >= 0)
-    {
-        ds._ext->glUniform1i(ds._layerOrderUL, (GLint)_order);
-    }
-
     if (_layer)
     {
         if (ds._layerUidUL >= 0)
             ds._ext->glUniform1i(ds._layerUidUL,      (GLint)_layer->getUID());
-        if (ds._layerOpacityUL >= 0 && _imageLayer)
-            ds._ext->glUniform1f(ds._layerOpacityUL,  (GLfloat)_imageLayer->getOpacity());
+        if (ds._layerOpacityUL >= 0 && _visibleLayer)
+            ds._ext->glUniform1f(ds._layerOpacityUL,  (GLfloat)_visibleLayer->getOpacity());
         if (ds._layerMinRangeUL >= 0 && _imageLayer)
             ds._ext->glUniform1f(ds._layerMinRangeUL, (GLfloat)_imageLayer->getMinVisibleRange());
         if (ds._layerMaxRangeUL >= 0 && _imageLayer)
@@ -80,8 +78,11 @@ LayerDrawable::drawImplementation(osg::RenderInfo& ri) const
     // necessary when doing custom OpenGL within a Drawable.
     if (_clearOsgState)
     {
+        // Necessary because tile->draw() applies texture attributes without informing the State:
         ri.getState()->dirtyAllAttributes();
-        ri.getState()->dirtyAllModes();
+
+        // NOTE: this is a NOOP in OSG 3.5.x, but not in 3.4.x ... Later we will need to
+        // revisit whether to call disableAllVertexArrays() in 3.5.x instead.
         ri.getState()->dirtyAllVertexArrays();
         
         // unbind local buffers when finished.

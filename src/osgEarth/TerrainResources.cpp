@@ -69,45 +69,6 @@ TerrainResources::reserveTextureImageUnit(int&        out_unit,
 }
 
 bool
-TerrainResources::reserveTextureImageUnit(int&         out_unit,
-                                          const Layer* layer,
-                                          const char*  requestor)
-{
-    if (layer == 0L)
-    {
-        return reserveTextureImageUnit(out_unit, requestor);
-    }
-
-    out_unit = -1;
-    unsigned maxUnits = osgEarth::Registry::instance()->getCapabilities().getMaxGPUTextureUnits();
-    
-    Threading::ScopedMutexLock exclusiveLock( _reservedUnitsMutex );
-    
-    // first collect a list of units that are already in use.
-    std::set<int> taken;
-    taken.insert(_globallyReservedUnits.begin(), _globallyReservedUnits.end());
-    ReservedUnits& layerUnits = _perLayerReservedUnits[layer];
-    taken.insert(layerUnits.begin(), layerUnits.end());
-
-    // now find the first unused one.
-    for( unsigned i=0; i<maxUnits; ++i )
-    {
-        if (taken.find(i) == taken.end())
-        {
-            layerUnits.insert( i );
-            out_unit = i;
-            if ( requestor )
-            {
-                OE_INFO << LC << "Texture unit " << i << " reserved by Layer "
-                    << layer->getName() << " for " << requestor << "\n";
-            }
-            return true;
-        }
-    }
-    return false;
-}
-
-bool
 TerrainResources::reserveTextureImageUnit(TextureImageUnitReservation& reservation,
                                           const char* requestor)
 {
@@ -190,6 +151,7 @@ TerrainResources::releaseTextureImageUnit(int unit)
 {
     Threading::ScopedMutexLock exclusiveLock( _reservedUnitsMutex );
     _globallyReservedUnits.erase( unit );
+    OE_INFO << LC << "Texture unit " << unit << " released\n";
 }
 
 void
@@ -202,9 +164,16 @@ TerrainResources::releaseTextureImageUnit(int unit, const Layer* layer)
     PerLayerReservedUnits::iterator i = _perLayerReservedUnits.find(layer);
     if (i != _perLayerReservedUnits.end())
     {
-        i->second.erase(unit);
-        if (i->second.empty())
+        ReservedUnits& reservedUnits = i->second;
+        reservedUnits.erase(unit);
+
+        // if there are no more units reserved for this layer, remove the record entirely
+        if (reservedUnits.empty())
+        {
             _perLayerReservedUnits.erase(i);
+        }
+
+        OE_INFO << LC << "Texture unit " << unit << " released (by layer " << layer->getName() << ")\n";
     }
 }
 

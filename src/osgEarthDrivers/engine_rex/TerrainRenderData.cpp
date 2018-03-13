@@ -47,6 +47,13 @@ TerrainRenderData::setup(const MapFrame& frame,
     _drawState = new DrawState();
     _drawState->_frame = frameNum;
     _drawState->_bindings = &bindings;
+    
+    // Is this a depth camera? Because if it is, we don't need any color layers.
+    const osg::Camera* cam = cv->getCurrentCamera();
+    bool isDepthCamera =
+        cam &&
+        (cam->getClearMask() & GL_COLOR_BUFFER_BIT) == 0u &&
+        (cam->getClearMask() & GL_DEPTH_BUFFER_BIT) != 0u;
 
     // Make a drawable for each rendering pass (i.e. each render-able map layer).
     for(LayerVector::const_iterator i = frame.layers().begin();
@@ -56,11 +63,12 @@ TerrainRenderData::setup(const MapFrame& frame,
         Layer* layer = i->get();
         if (layer->getEnabled())
         {
-            if (layer->getRenderType() == Layer::RENDERTYPE_TILE ||
-                layer->getRenderType() == Layer::RENDERTYPE_PATCH)
-            {
-                bool render = true;
+            bool render =
+                (layer->getRenderType() == Layer::RENDERTYPE_TERRAIN_SURFACE) || // && !isDepthCamera) ||
+                (layer->getRenderType() == Layer::RENDERTYPE_TERRAIN_PATCH);
 
+            if ( render )
+            {
                 // If this is an image layer, check the enabled/visible states.
                 VisibleLayer* visLayer = dynamic_cast<VisibleLayer*>(layer);
                 if (visLayer)
@@ -70,17 +78,20 @@ TerrainRenderData::setup(const MapFrame& frame,
 
                 if (render)
                 {
-                    ImageLayer* imgLayer = dynamic_cast<ImageLayer*>(layer);
-
-                    // Make a list of "global" layers. There are layers whose data is not
-                    // represented in the TerrainTileModel, like a splatting layer or a patch
-                    // layer. The data for these is dynamic and not based on data fetched.
-                    if (imgLayer == 0L && layer->getRenderType() == Layer::RENDERTYPE_TILE)
+                    if (layer->getRenderType() == Layer::RENDERTYPE_TERRAIN_SURFACE)
                     {
-                        tileLayers().push_back(layer);
-                        addLayerDrawable(layer);
+                        LayerDrawable* ld = addLayerDrawable(layer, frame);
+
+                        // If the current camera is depth-only, leave this layer in the set
+                        // but mark it as no-draw. We keep it in the set so the culler doesn't
+                        // inadvertently think it's an orphaned layer.
+                        if (isDepthCamera)
+                        {
+                            ld->_draw = false;
+                        }
                     }
-                    else if (layer->getRenderType() == Layer::RENDERTYPE_PATCH)
+
+                    else // if (layer->getRenderType() == Layer::RENDERTYPE_TERRAIN_PATCH)
                     {
                         PatchLayer* patchLayer = static_cast<PatchLayer*>(layer); // asumption!
 
@@ -88,12 +99,8 @@ TerrainRenderData::setup(const MapFrame& frame,
                             patchLayer->getAcceptCallback()->acceptLayer(*cv, cv->getCurrentCamera()))
                         {
                             patchLayers().push_back(dynamic_cast<PatchLayer*>(layer));
-                            addLayerDrawable(layer);
+                            addLayerDrawable(layer, frame);
                         }
-                    }
-                    else
-                    {
-                        addLayerDrawable(layer);
                     }
                 }
             }
@@ -101,18 +108,33 @@ TerrainRenderData::setup(const MapFrame& frame,
     }
 
     // Include a "blank" layer for missing data.
-    LayerDrawable* blank = addLayerDrawable(0L);
+    LayerDrawable* blank = addLayerDrawable(0L, frame);
     blank->getOrCreateStateSet()->setDefine("OE_TERRAIN_RENDER_IMAGERY", osg::StateAttribute::OFF);
 }
 
+namespace
+{
+    struct DebugCallback : public osg::Drawable::DrawCallback
+    {
+        std::string _s;
+        DebugCallback(const std::string& s) : _s(s) { }
+        void drawImplementation(osg::RenderInfo& ri, const osg::Drawable* d) const {
+            OE_WARN << "  Drawing Layer: " << _s << std::endl;
+            d->drawImplementation(ri);
+        }
+
+    };
+}
+
 LayerDrawable*
-TerrainRenderData::addLayerDrawable(const Layer* layer)
+TerrainRenderData::addLayerDrawable(const Layer* layer, const MapFrame& frame)
 {
     UID uid = layer ? layer->getUID() : -1;
     LayerDrawable* ld = new LayerDrawable();
     _layerList.push_back(ld);
     _layerMap[uid] = ld;
     ld->_layer = layer;
+    ld->_visibleLayer = dynamic_cast<const VisibleLayer*>(layer);
     ld->_imageLayer = dynamic_cast<const ImageLayer*>(layer);
     ld->_order = _layerList.size() - 1;
     ld->_drawState = _drawState.get();
@@ -121,6 +143,5 @@ TerrainRenderData::addLayerDrawable(const Layer* layer)
         ld->setStateSet(layer->getStateSet());
         ld->_renderType = layer->getRenderType();
     }
-
     return ld;
 }

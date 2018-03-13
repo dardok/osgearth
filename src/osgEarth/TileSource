@@ -162,8 +162,6 @@ namespace osgEarth
         void write(const std::string &filename) const;
 
     private:
-        //typedef std::set<TileKey> BlacklistedTiles;
-        //BlacklistedTiles _tiles;
         mutable LRUCache<TileKey, bool> _tiles; // using as a set (value unused)
     };
 
@@ -292,13 +290,7 @@ namespace osgEarth
         virtual const Profile* getProfile() const;
 
         /**
-         * Gets the preferred extension for this TileSource
-         * @deprecated No longer used
-         */
-        virtual std::string getExtension() const {return "png";}
-
-        /**
-         *Gets the blacklist for this TileSource
+         * Gets the blacklist for this TileSource
          */
         TileBlacklist* getBlacklist();
         const TileBlacklist* getBlacklist() const;
@@ -328,6 +320,12 @@ namespace osgEarth
          */
         const TileSourceOptions& getOptions() const { return _options; }
 
+        /**
+         * Set the L2 cache size default (if the size was not set in 
+         * the options or environment). Must call this before open().
+         */
+        void setDefaultL2CacheSize(int size);
+
     public:
 
         /* methods required by osg::Object */
@@ -346,8 +344,6 @@ namespace osgEarth
          * active osgDB::Options. The method returns a status code indicating whether
          * intialization succeeded (in which case the owning layer will become enabled)
          * or failed (in which case the owning layer will become disabled.
-         *
-         * This method replaces the now-deprecated initialize method below.
          *
          * The Subclass should override this to report a correct initialization status.
          * The default implementation reports STATUS_OK (for compatibility).
@@ -396,24 +392,10 @@ namespace osgEarth
         //! Compat - do not override
         unsigned getTileSize() const { return getPixelsPerTile(); }
 
-
-    protected: // deprecated
-
-        /**
-         * @deprecated
-         * Initializes the TileSource. This is the old initialize method; it will exists
-         * for backwards compatibility with older user-defined TileSource implementations.
-         * Consider updating to the new initialize() method above since it properly
-         * reports the results of the initialization.
-         */
-        virtual void initialize(
-            const osgDB::Options* dbOptions,
-            const Profile*        overrideProfile ) { }
-
     private:
 
         osg::ref_ptr<const Profile> _profile;
-        const TileSourceOptions     _options;
+        TileSourceOptions _options;
 
         friend class Map;
         friend class MapEngine;
@@ -426,7 +408,6 @@ namespace osgEarth
         osg::ref_ptr<MemCache> _memCache;
 
         DataExtentList  _dataExtents;
-        GeoExtent       _dataExtentsUnion;
         Status          _status;
         Mode            _mode;
         unsigned        _tileSize;     

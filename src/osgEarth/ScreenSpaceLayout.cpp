@@ -122,8 +122,9 @@ namespace
     // TODO: a way to clear out this list when drawables go away
     struct DrawableInfo
     {
-        DrawableInfo() : _lastAlpha(1.0f), _lastScale(1.0f) { }
+        DrawableInfo() : _lastAlpha(1.0f), _lastScale(1.0f), _frame(0u) { }
         float _lastAlpha, _lastScale;
+        unsigned _frame;
     };
 
     typedef std::map<const osg::Drawable*, DrawableInfo> DrawableMemory;
@@ -194,6 +195,29 @@ ScreenSpaceLayoutOptions::getConfig() const
 
 //----------------------------------------------------------------------------
 
+template<typename T>
+struct LCGIterator
+{
+    T& _vec;
+    unsigned _seed;
+    unsigned _n;
+    unsigned _index;
+    unsigned _a, _c;
+    LCGIterator(T& vec) : _vec(vec), _seed(0u), _index(0u) {
+        _n = vec.size();
+        _a = _n+1;
+        _c = 15487457u; // a very large prime
+    }
+    bool hasMore() const { 
+        return _index < _n;
+    }
+    const typename T::value_type& next() {
+        _seed = (_a*_seed + _c) % _n;
+        _index++;
+        return _vec[_seed];
+    }
+};
+
 /**
  * A custom RenderLeaf sorting algorithm for decluttering objects.
  *
@@ -256,7 +280,13 @@ struct /*internal*/ DeclutterSort : public osgUtil::RenderBin::SortCallback
             return;
 
         // access the view-specific persistent data:
-        osg::Camera* cam   = bin->getStage()->getCamera();
+        osg::Camera* cam = bin->getStage()->getCamera();
+
+        // bail out if this camera is a master camera with no GC
+        // (e.g., in a multi-screen layout)
+        if (cam == NULL || cam->getGraphicsContext() == NULL)
+            return;
+
         PerCamInfo& local = _perCam.get( cam );
 
         osg::Timer_t now = osg::Timer::instance()->tick();
@@ -287,16 +317,19 @@ struct /*internal*/ DeclutterSort : public osgUtil::RenderBin::SortCallback
         osg::Matrix refCamScaleMat;
         osg::Matrix refWindowMatrix = windowMatrix;
 
-        if ( cam->isRenderToTextureCamera() )
+        // If the camera is actually an RTT slave camera, it's our picker, and we need to
+        // adjust the scale to match it.
+        if (cam->isRenderToTextureCamera() &&
+            cam->getView() &&
+            cam->getView()->getCamera() &&
+            cam->getView()->getCamera() != cam)
+            //cam->getView()->findSlaveIndexForCamera(cam) < cam->getView()->getNumSlaves())
         {
-            osg::Camera* refCam = dynamic_cast<osg::Camera*>(cam->getUserData());
-            if ( refCam )
-            {
-                const osg::Viewport* refVP = refCam->getViewport();
-                refCamScale.set( vp->width() / refVP->width(), vp->height() / refVP->height(), 1.0 );
-                refCamScaleMat.makeScale( refCamScale );
-                refWindowMatrix = refVP->computeWindowMatrix();
-            }
+            osg::Camera* parentCam = cam->getView()->getCamera();
+            const osg::Viewport* refVP = parentCam->getViewport();
+            refCamScale.set( vp->width() / refVP->width(), vp->height() / refVP->height(), 1.0 );
+            refCamScaleMat.makeScale( refCamScale );
+            refWindowMatrix = refVP->computeWindowMatrix();
         }
 
         // Track the parent nodes of drawables that are obscured (and culled). Drawables
@@ -322,6 +355,8 @@ struct /*internal*/ DeclutterSort : public osgUtil::RenderBin::SortCallback
         for(osgUtil::RenderBin::RenderLeafList::iterator i = leaves.begin(); 
             i != leaves.end() && local._passed.size() < limit; 
             ++i )
+        //LCGIterator<osgUtil::RenderBin::RenderLeafList> i(leaves);
+        //while (i.hasMore() && local._passed.size() < limit)
         {
             bool visible = true;
 
@@ -537,7 +572,9 @@ struct /*internal*/ DeclutterSort : public osgUtil::RenderBin::SortCallback
                     }
 
                     leaf->_depth = info._lastAlpha;
-                    leaves.push_back( leaf );                
+                    leaves.push_back( leaf );
+
+                    info._frame++;
                 }
                 else
                 {
@@ -558,20 +595,29 @@ struct /*internal*/ DeclutterSort : public osgUtil::RenderBin::SortCallback
                 bool isBbox = dynamic_cast<const osgEarth::Annotation::BboxDrawable*>(drawable) != 0L;
                 bool fullyOut = true;
 
-                if ( info._lastScale != *options.minAnimationScale() )
+                if (info._frame > 0u)
                 {
-                    fullyOut = false;
-                    info._lastScale -= elapsedSeconds / std::max(*options.outAnimationTime(), 0.001f);
-                    if ( info._lastScale < *options.minAnimationScale() )
-                        info._lastScale = *options.minAnimationScale();
-                }
+                    if ( info._lastScale != *options.minAnimationScale() )
+                    {
+                        fullyOut = false;
+                        info._lastScale -= elapsedSeconds / std::max(*options.outAnimationTime(), 0.001f);
+                        if ( info._lastScale < *options.minAnimationScale() )
+                            info._lastScale = *options.minAnimationScale();
+                    }
 
-                if ( info._lastAlpha != *options.minAnimationAlpha() )
+                    if ( info._lastAlpha != *options.minAnimationAlpha() )
+                    {
+                        fullyOut = false;
+                        info._lastAlpha -= elapsedSeconds / std::max(*options.outAnimationTime(), 0.001f);
+                        if ( info._lastAlpha < *options.minAnimationAlpha() )
+                            info._lastAlpha = *options.minAnimationAlpha();
+                    }
+                }
+                else
                 {
-                    fullyOut = false;
-                    info._lastAlpha -= elapsedSeconds / std::max(*options.outAnimationTime(), 0.001f);
-                    if ( info._lastAlpha < *options.minAnimationAlpha() )
-                        info._lastAlpha = *options.minAnimationAlpha();
+                    // prevent first-frame "pop out"
+                    info._lastScale = options.minAnimationScale().get();
+                    info._lastAlpha = options.minAnimationAlpha().get();
                 }
 
                 leaf->_depth = info._lastAlpha;
@@ -587,6 +633,8 @@ struct /*internal*/ DeclutterSort : public osgUtil::RenderBin::SortCallback
                             leaf->_modelview->preMult( osg::Matrix::scale(info._lastScale,info._lastScale,1) );
                     }
                 }
+
+                info._frame++;
             }
         }
     }
@@ -825,7 +873,7 @@ ScreenSpaceLayout::activate(osg::StateSet* stateSet) //, int binNum)
         stateSet->setRenderBinDetails(
             binNum,
             OSGEARTH_SCREEN_SPACE_LAYOUT_BIN,
-            osg::StateSet::OVERRIDE_RENDERBIN_DETAILS);
+            osg::StateSet::OVERRIDE_PROTECTED_RENDERBIN_DETAILS);
 
         // Force a single shared layout bin per render stage
         stateSet->setNestRenderBins( false );

@@ -168,6 +168,7 @@
         <cache_policy usage="no_cache"/>
         <coverages>
             <coverage name="ESA GLOBCOVER" driver="gdal">
+                <profile>global-geodetic</profile>
                 <url>H:/data/esa/GLOBCOVER_L4_200901_200912_V2.3_Ant_tiled.tif</url>
                 <xi:include href="../data/land_cover_ESA_GLOBCOVER.xml"/>
             </coverage>

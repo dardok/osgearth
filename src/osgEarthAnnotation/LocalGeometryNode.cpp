@@ -25,6 +25,7 @@
 #include <osgEarthAnnotation/AnnotationUtils>
 #include <osgEarthFeatures/GeometryCompiler>
 #include <osgEarthFeatures/GeometryUtils>
+#include <osgEarthFeatures/FilterContext>
 #include <osgEarth/GeometryClamper>
 #include <osgEarth/Utils>
 #include <osgEarth/NodeUtils>
@@ -127,7 +128,7 @@ LocalGeometryNode::initGeometry(const osgDB::Options* dbOptions)
             session = new Session(getMapNode()->getMap(), 0L, 0L, dbOptions);
         
         GeometryCompiler gc;
-        osg::ref_ptr<osg::Node> node = gc.compile( _geom.get(), getStyle(), FilterContext(session) );
+        osg::ref_ptr<osg::Node> node = gc.compile( _geom.get(), getStyle(), FilterContext(session.get()) );
         if ( node.valid() )
         {
             node = AnnotationUtils::installOverlayParent( node.get(), getStyle() );

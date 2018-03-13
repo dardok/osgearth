@@ -10,6 +10,18 @@ ENDIF(GEOS_FOUND)
 
 SET(LIB_NAME osgEarthFeatures)
 
+set(TARGET_GLSL
+    GPULinesScreenProj.glsl)
+
+set(SHADERS_CPP "${CMAKE_CURRENT_BINARY_DIR}/AutoGenShaders.cpp")
+
+set(TARGET_IN
+    Shaders.cpp.in)
+
+configure_shaders(
+    Shaders.cpp.in
+    ${SHADERS_CPP}
+    ${TARGET_GLSL} )
 
 SET(HEADER_PATH ${OSGEARTH_SOURCE_DIR}/include/${LIB_NAME})
 SET(LIB_PUBLIC_HEADERS
@@ -25,7 +37,6 @@ SET(LIB_PUBLIC_HEADERS
     Feature
     FeatureCursor
     FeatureDisplayLayout
-    FeatureDrawSet
     FeatureIndex
     FeatureListSource
     FeatureMaskLayer
@@ -40,10 +51,10 @@ SET(LIB_PUBLIC_HEADERS
     FilterContext
     GeometryCompiler
     GeometryUtils
+    GPULines
     LabelSource
     MVT
     OgrUtils
-    OptimizerHints
     PolygonizeLines
     ResampleFilter
     ScaleFilter
@@ -52,6 +63,7 @@ SET(LIB_PUBLIC_HEADERS
     Script
     ScriptEngine
     ScriptFilter
+    Shaders
     SubstituteModelFilter
     TessellateOperator
     TextSymbolizer
@@ -71,7 +83,6 @@ SET(TARGET_SRC
     Feature.cpp
     FeatureCursor.cpp
     FeatureDisplayLayout.cpp
-    FeatureDrawSet.cpp
     FeatureListSource.cpp
     FeatureMaskLayer.cpp
     FeatureModelGraph.cpp
@@ -85,10 +96,10 @@ SET(TARGET_SRC
     FilterContext.cpp
     GeometryCompiler.cpp
     GeometryUtils.cpp
+    GPULines.cpp
     LabelSource.cpp
     MVT.cpp
     OgrUtils.cpp
-    OptimizerHints.cpp
     PolygonizeLines.cpp
     ResampleFilter.cpp
     ScaleFilter.cpp
@@ -100,12 +111,13 @@ SET(TARGET_SRC
     TessellateOperator.cpp
     TextSymbolizer.cpp
     TransformFilter.cpp
-    VirtualFeatureSource.cpp    
+    VirtualFeatureSource.cpp 
+    ${SHADERS_CPP}
 )
 
-IF(PROTOBUF_FOUND AND PROTOBUF_PROTOC_EXECUTABLE)
+IF(Protobuf_FOUND AND Protobuf_PROTOC_EXECUTABLE)
 
-  INCLUDE_DIRECTORIES(${PROTOBUF_INCLUDE_DIR} ${CMAKE_CURRENT_BINARY_DIR})
+  INCLUDE_DIRECTORIES(${Protobuf_INCLUDE_DIR} ${CMAKE_CURRENT_BINARY_DIR})
   PROTOBUF_GENERATE_CPP(PROTO_VECTOR_TILE_CPP PROTO_VECTOR_TILE_H vector_tile.proto)
 
   SET(LIB_PUBLIC_HEADERS
@@ -122,9 +134,12 @@ IF(PROTOBUF_FOUND AND PROTOBUF_PROTOC_EXECUTABLE)
 
 ENDIF()
 
-ADD_LIBRARY(${LIB_NAME} ${OSGEARTH_USER_DEFINED_DYNAMIC_OR_STATIC}
+ADD_LIBRARY(${LIB_NAME}
+    ${OSGEARTH_USER_DEFINED_DYNAMIC_OR_STATIC}
     ${LIB_PUBLIC_HEADERS}
     ${TARGET_SRC}
+    ${TARGET_GLSL}
+    ${TARGET_IN}
 )
 
 INCLUDE_DIRECTORIES(${GDAL_INCLUDE_DIR})
@@ -141,12 +156,13 @@ LINK_INTERNAL(${LIB_NAME}
     osgEarthSymbology
 )
 
-SET(LINK_VARS OSG_LIBRARY OSGUTIL_LIBRARY OSGSIM_LIBRARY OSGTERRAIN_LIBRARY OSGDB_LIBRARY OSGFX_LIBRARY OSGVIEWER_LIBRARY OSGTEXT_LIBRARY OSGGA_LIBRARY OPENTHREADS_LIBRARY)
-IF(PROTOBUF_FOUND AND PROTOBUF_PROTOC_EXECUTABLE)
-  SET(LINK_VARS ${LINK_VARS} PROTOBUF_LIBRARY)
+SET(LINK_VARS
+    OSG_LIBRARY OSGUTIL_LIBRARY OSGSIM_LIBRARY OSGTERRAIN_LIBRARY OSGDB_LIBRARY OSGFX_LIBRARY
+    OSGVIEWER_LIBRARY OSGTEXT_LIBRARY OSGGA_LIBRARY OPENTHREADS_LIBRARY)
+
+IF(Protobuf_FOUND AND Protobuf_PROTOC_EXECUTABLE)
+  list(APPEND LINK_VARS Protobuf_LIBRARIES)
 ENDIF()
-
-
 
 LINK_WITH_VARIABLES(${LIB_NAME} ${LINK_VARS})
 

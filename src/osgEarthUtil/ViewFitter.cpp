@@ -18,6 +18,8 @@
  */
 #include <osgEarthUtil/ViewFitter>
 
+#define LC "[ViewFitter] "
+
 using namespace osgEarth;
 using namespace osgEarth::Util;
 
@@ -32,11 +34,18 @@ namespace
         osg::Vec4d Ptemp = Pclip * projMatrixInv;
         Pview.set(Ptemp.x() / Ptemp.w(), Ptemp.y() / Ptemp.w(), Ptemp.z() / Ptemp.w());
     }
+
+    double mix(double a, double b, double t)
+    {
+        return a*(1.0-t) + b*t;
+    }
 }
 
 ViewFitter::ViewFitter(const SpatialReference* mapSRS, const osg::Camera* camera) :
 _mapSRS(mapSRS),
-_camera(camera)
+_camera(camera),
+_vfov(30.0f),
+_buffer_m(0.0)
 {
     //nop
 }
@@ -44,62 +53,115 @@ _camera(camera)
 bool
 ViewFitter::createViewpoint(const std::vector<GeoPoint>& points, Viewpoint& outVP) const
 {
-    if (points.empty() || _mapSRS.valid() == false || _camera.valid()== false)
+    if (points.empty() || _mapSRS.valid() == false || _camera.valid() == false)
         return false;
 
     osg::Matrix projMatrix = _camera->getProjectionMatrix();
     osg::Matrix viewMatrix = _camera->getViewMatrix();
 
-    // Orthographic matrix is not yet supported.
-    bool isOrtho = osg::equivalent(projMatrix(3,3), 1.0);
-    if (isOrtho)
-        return false;
+    bool isPerspective = !osg::equivalent(projMatrix(3,3), 1.0);
 
     // Convert the point set to world space:
     std::vector<osg::Vec3d> world(points.size());
 
+    // Collect the extent so we can calculate the centroid.
+    GeoExtent extent(_mapSRS.get());
+
     for (int i = 0; i < points.size(); ++i)
     {
-        GeoPoint p = points[i].transform(_mapSRS.get());
+        // force absolute altitude mode - we don't care about clamping here
+        GeoPoint p = points[i];
+        p.z() = 0;
+        p.altitudeMode() = ALTMODE_ABSOLUTE;
+
+        // transform to the map's srs and then to world coords.
+        p = p.transform(_mapSRS.get());
         p.toWorld(world[i]);
-    }
 
-    // Rewrite the projection matrix so the far plane is at the ellipsoid. 
-    // We do this so we can project our control points onto a common plane.
-    double fovy_deg, ar, znear, zfar;
-    projMatrix.getPerspective(fovy_deg, ar, znear, zfar);
-    znear = 1.0;
+        extent.expandToInclude(p.x(), p.y());
+    }
+    
     double eyeDist;
+    double fovy_deg, ar;
+    double zfar;
 
-    if (_mapSRS->isGeographic())
-    {
-        zfar = osg::maximum(_mapSRS->getEllipsoid()->getRadiusEquator(),
-                            _mapSRS->getEllipsoid()->getRadiusPolar());
-        eyeDist = zfar * 2.0;
-    }
-    else
-    {
-        osg::Vec3d eye, center, up2;
-        viewMatrix.getLookAt(eye, center, up2);
-        eyeDist = eye.length();
-        zfar = eyeDist;
-    }
-    projMatrix.makePerspective(fovy_deg, ar, znear, zfar);
+    // Calculate the centroid, which will become the focal point of the view:
+    GeoPoint centroidMap;
+    extent.getCentroid(centroidMap);
 
-    // Calculate the "centroid" of our point set:
-    osg::Vec3d lookFrom;
-    for (int i = 0; i < world.size(); ++i)
-        lookFrom += world[i];
-    lookFrom /= world.size();
+    osg::Vec3d centroid;
+    centroidMap.toWorld(centroid);
+
+    if (isPerspective)
+    {
+        // For a perspective matrix, rewrite the projection matrix so 
+        // the far plane is the radius of the ellipsoid. We do this so
+        // we can project our control points onto a common plane.
+        double znear;
+        projMatrix.getPerspective(fovy_deg, ar, znear, zfar);
+        znear = 1.0;
+
+        if (_mapSRS->isGeographic())
+        {
+            osg::Vec3d C = centroid;
+            C.normalize();
+            C.z() = fabs(C.z());
+            double t = C * osg::Vec3d(0,0,1); // dot product
+
+            zfar = mix(_mapSRS->getEllipsoid()->getRadiusEquator(),
+                       _mapSRS->getEllipsoid()->getRadiusPolar(),
+                       t);
+            eyeDist = zfar * 2.0;
+        }
+        else
+        {
+            osg::Vec3d eye, center, up2;
+            viewMatrix.getLookAt(eye, center, up2);
+            eyeDist = eye.length();
+            zfar = eyeDist;
+        }
+
+        projMatrix.makePerspective(fovy_deg, ar, znear, zfar);
+    }
+
+    else // isOrtho
+    {
+        fovy_deg = _vfov;
+        double L, R, B, T, N, F;
+        projMatrix.getOrtho(L, R, B, T, N, F);
+        ar = (R - L) / (T - B);
+
+        if (_mapSRS->isGeographic())
+        {
+            osg::Vec3d C = centroid;
+            C.normalize();
+            C.z() = fabs(C.z());
+            double t = C * osg::Vec3d(0,0,1); // dot product
+
+            zfar = mix(_mapSRS->getEllipsoid()->getRadiusEquator(),
+                       _mapSRS->getEllipsoid()->getRadiusPolar(),
+                       t);
+            eyeDist = zfar * 2.0;
+        }
+        else
+        {
+            osg::Vec3d eye, center, up2;
+            viewMatrix.getLookAt(eye, center, up2);
+            eyeDist = eye.length();
+            zfar = eyeDist;
+        }
+    }
 
     // Set up a new view matrix to look down on that centroid:
     osg::Vec3d lookAt, up;
+
+    osg::Vec3d lookFrom = centroid;
 
     if (_mapSRS->isGeographic())
     {
         lookFrom.normalize();
         lookFrom *= eyeDist;
-        lookAt.set(0,0,0);
+        lookAt = centroid;
         up.set(0,0,1);
     }
     else
@@ -119,11 +181,22 @@ ViewFitter::createViewpoint(const std::vector<GeoPoint>& points, Viewpoint& outV
     std::vector<osg::Vec3d> view(world.size());
     for (int i = 0; i < world.size(); ++i)
     {
+        // Transform into view space (camera-relative):
         view[i] = world[i] * viewMatrix;
-        projectToFarPlane(view[i], projMatrix, projMatrixInv);
+
+        // For a perspective projection, we have to project each point
+        // on to the far clipping plane. No need to do this in orthographic
+        // since the X and Y would not change.
+        if (isPerspective)
+            projectToFarPlane(view[i], projMatrix, projMatrixInv);
+
         Mx = osg::maximum(Mx, osg::absolute(view[i].x()));
         My = osg::maximum(My, osg::absolute(view[i].y()));
     }
+
+    // Apply the edge buffer:
+    Mx += _buffer_m;
+    My += _buffer_m;
 
     // Calculate optimal new Z (distance from view plane)
     double half_fovy_rad = osg::DegreesToRadians(fovy_deg) * 0.5;
@@ -133,21 +206,21 @@ ViewFitter::createViewpoint(const std::vector<GeoPoint>& points, Viewpoint& outV
     double Zbest = std::max(Zx, Zy);
 
     // Calcluate the new viewpoint.
-    osg::Vec3d FPworld = lookFrom;
+    //osg::Vec3d FPworld = centroid;
 
-    if (_mapSRS->isGeographic())
-    {
-        FPworld.normalize();
-        FPworld *= zfar;
-    }
-    else
-    {
-        FPworld.z() = 0.0;
-    }
+    //if (_mapSRS->isGeographic())
+    //{
+    //    FPworld.normalize();
+    //    FPworld *= zfar;
+    //}
+    //else
+    //{
+    //    FPworld.z() = 0.0;
+    //}
 
     // Convert to a geopoint
     GeoPoint FP;
-    FP.fromWorld(_mapSRS.get(), FPworld);
+    FP.fromWorld(_mapSRS.get(), centroid);
     outVP = Viewpoint();
     outVP.focalPoint() = FP;
     outVP.pitch() = -90;

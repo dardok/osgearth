@@ -20,6 +20,7 @@
 #include <osgEarthFeatures/Session>
 #include <osgEarthFeatures/FeatureSourceIndexNode>
 #include <osgEarthFeatures/PolygonizeLines>
+#include <osgEarthFeatures/GPULines>
 #include <osgEarthSymbology/TextSymbol>
 #include <osgEarthSymbology/PointSymbol>
 #include <osgEarthSymbology/LineSymbol>
@@ -36,11 +37,11 @@
 #include <osg/LineStipple>
 #include <osg/Point>
 #include <osg/MatrixTransform>
+#include <osg/TriangleIndexFunctor>
 #include <osgText/Text>
 #include <osgUtil/Tessellator>
 #include <osgUtil/Optimizer>
 #include <osgUtil/Simplifier>
-#include <osgUtil/SmoothingVisitor>
 #include <osgDB/WriteFile>
 #include <osg/Version>
 #include <iterator>
@@ -65,7 +66,7 @@ namespace
         return isCCW(x1, y1, x3, y3, x4, y4) != isCCW(x2, y2, x3, y3, x4, y4) && isCCW(x1, y1, x2, y2, x3, y3) != isCCW(x1, y1, x2, y2, x4, y4);
     }
 
-    bool holeCompare(osgEarth::Symbology::Ring* i, osgEarth::Symbology::Ring* j)
+    bool holeCompare(const osg::ref_ptr<Ring>& i, const osg::ref_ptr<Ring>& j)
     {
         return i->getBounds().xMax() > j->getBounds().xMax();
     }
@@ -95,7 +96,9 @@ BuildGeometryFilter::BuildGeometryFilter( const Style& style ) :
 _style        ( style ),
 _maxAngle_deg ( 180.0 ),
 _geoInterp    ( GEOINTERP_RHUMB_LINE ),
-_maxPolyTilingAngle_deg( 45.0f )
+_maxPolyTilingAngle_deg( 45.0f ),
+_optimizeVertexOrdering( false ),
+_maximumCreaseAngle( 0.0f )
 {
     //nop
 }
@@ -113,9 +116,8 @@ BuildGeometryFilter::processPolygons(FeatureList& features, FilterContext& conte
     // set up the reference system info:
     if ( context.isGeoreferenced() )
     {
-        //makeECEF   = context.getSession()->getMapInfo().isGeocentric();
         featureSRS = context.extent()->getSRS();
-        outputSRS  = context.getOutputSRS(); //getSession()->getMapInfo().getProfile()->getSRS();
+        outputSRS  = context.getOutputSRS();
         makeECEF   = context.getOutputSRS()->isGeographic();
     }
 
@@ -190,7 +192,7 @@ BuildGeometryFilter::processPolygons(FeatureList& features, FilterContext& conte
                 hats->push_back( i->z() );
 
             // build the geometry:
-            tileAndBuildPolygon(part, featureSRS, outputSRS, makeECEF, true, osgGeom, w2l);
+            tileAndBuildPolygon(part, featureSRS, outputSRS, makeECEF, true, osgGeom.get(), w2l);
             //buildPolygon(part, featureSRS, mapSRS, makeECEF, true, osgGeom, w2l);
 
             osg::Vec3Array* allPoints = static_cast<osg::Vec3Array*>(osgGeom->getVertexArray());
@@ -212,7 +214,7 @@ BuildGeometryFilter::processPolygons(FeatureList& features, FilterContext& conte
                     }
 
                     double threshold = osg::DegreesToRadians( *_maxAngle_deg );
-                    OE_TEST << "Running mesh subdivider with threshold " << *_maxAngle_deg << std::endl;
+                    //OE_TEST << "Running mesh subdivider with threshold " << *_maxAngle_deg << std::endl;
 
                     MeshSubdivider ms( _world2local, _local2world );
                     if ( input->geoInterp().isSet() )
@@ -233,13 +235,13 @@ BuildGeometryFilter::processPolygons(FeatureList& features, FilterContext& conte
 
                 // record the geometry's primitive set(s) in the index:
                 if ( context.featureIndex() )
-                    context.featureIndex()->tagDrawable( osgGeom, input );
+                    context.featureIndex()->tagDrawable( osgGeom.get(), input );
 
                 // install clamping attributes if necessary
                 if (_style.has<AltitudeSymbol>() &&
                     _style.get<AltitudeSymbol>()->technique() == AltitudeSymbol::TECHNIQUE_GPU)
                 {
-                    Clamping::applyDefaultClampingAttrs( osgGeom, input->getDouble("__oe_verticalOffset", 0.0) );
+                    Clamping::applyDefaultClampingAttrs( osgGeom.get(), input->getDouble("__oe_verticalOffset", 0.0) );
                 }
             }
             else
@@ -253,6 +255,25 @@ BuildGeometryFilter::processPolygons(FeatureList& features, FilterContext& conte
     return geode;
 }
 
+namespace
+{
+    struct CopyHeightsCallback : public PolygonizeLinesOperator::Callback
+    {
+        osg::FloatArray* _heights;
+        osg::ref_ptr<osg::FloatArray> _newHeights;
+        CopyHeightsCallback(osg::FloatArray* heights) : _heights(heights) {
+            if (_heights) {
+                _newHeights = new osg::FloatArray();
+                _newHeights->reserve(_heights->size() * 3);
+            }
+        }
+        void operator()(unsigned i) {
+            if (_newHeights.valid() && _heights) {
+                _newHeights->push_back((*_heights)[i]);
+            }
+        }
+    };
+}
 
 osg::Group*
 BuildGeometryFilter::processPolygonizedLines(FeatureList&   features,
@@ -268,11 +289,9 @@ BuildGeometryFilter::processPolygonizedLines(FeatureList&   features,
 
     if ( context.isGeoreferenced() )
     {
-        //makeECEF   = context.getSession()->getMapInfo().isGeocentric();
         featureSRS = context.extent()->getSRS();
         outputSRS = context.getOutputSRS();
         makeECEF = outputSRS->isGeographic();
-        //mapSRS     = context.getSession()->getMapInfo().getProfile()->getSRS();
     }
 
     // We need to create a different geode for each texture that is used so they can share statesets.
@@ -332,6 +351,7 @@ BuildGeometryFilter::processPolygonizedLines(FeatureList&   features,
 
         // The operator we'll use to make lines into polygons.
         PolygonizeLinesOperator polygonizer( *line->stroke() );
+        //GPULinesOperator gpuLines(*line->stroke() );
 
         // iterate over all the feature's geometry parts. We will treat
         // them as lines strings.
@@ -350,11 +370,20 @@ BuildGeometryFilter::processPolygonizedLines(FeatureList&   features,
             if ( part->size() < 2 )
                 continue;
 
+            // GPU clamping enabled?
+            bool gpuClamping =
+                _style.has<AltitudeSymbol>() &&
+                _style.get<AltitudeSymbol>()->technique() == AltitudeSymbol::TECHNIQUE_GPU;
+
             // collect all the pre-transformation HAT (Z) values.
-            osg::ref_ptr<osg::FloatArray> hats = new osg::FloatArray();
-            hats->reserve( part->size() );
-            for(Geometry::const_iterator i = part->begin(); i != part->end(); ++i )
-                hats->push_back( i->z() );
+            osg::ref_ptr<osg::FloatArray> hats = 0L;
+            if (gpuClamping)
+            {
+                hats = new osg::FloatArray();
+                hats->reserve( part->size() );
+                for(Geometry::const_iterator i = part->begin(); i != part->end(); ++i )
+                    hats->push_back( i->z() );
+            }
 
             // transform the geometry into the target SRS and localize it about
             // a local reference point.
@@ -363,7 +392,9 @@ BuildGeometryFilter::processPolygonizedLines(FeatureList&   features,
             transformAndLocalize( part->asVector(), featureSRS, verts.get(), normals.get(), outputSRS, _world2local, makeECEF );
 
             // turn the lines into polygons.
-            osg::Geometry* geom = polygonizer( verts.get(), normals.get(), twosided );
+            CopyHeightsCallback copyHeights(hats.get());
+            osg::Geometry* geom = polygonizer( verts.get(), normals.get(), gpuClamping? &copyHeights : 0L, twosided );
+            //osg::Geometry* geom = gpuLines(verts.get());
             if ( geom )
             {
                 geode->addDrawable( geom );
@@ -374,14 +405,14 @@ BuildGeometryFilter::processPolygonizedLines(FeatureList&   features,
                 context.featureIndex()->tagDrawable( geom, input );
 
             // install clamping attributes if necessary
-            if (_style.has<AltitudeSymbol>() &&
-                _style.get<AltitudeSymbol>()->technique() == AltitudeSymbol::TECHNIQUE_GPU)
+            if (gpuClamping)
             {
                 Clamping::applyDefaultClampingAttrs( geom, input->getDouble("__oe_verticalOffset", 0.0) );
-                Clamping::setHeights( geom, hats.get() );
+                Clamping::setHeights( geom, copyHeights._newHeights.get() );
+                //OE_WARN << "heights = " << hats->size() << ", new hats = " << copyHeights._newHeights->size() << ", verts=" << geom->getVertexArray()->getNumElements() << std::endl;
             }            
         }
-        polygonizer.installShaders( geode );
+        polygonizer.installShaders( geode.get() );
     }
 
     for (TextureToGeodeMap::iterator itr = geodes.begin(); itr != geodes.end(); ++itr)
@@ -392,11 +423,15 @@ BuildGeometryFilter::processPolygonizedLines(FeatureList&   features,
         mg.setTargetMaximumNumberOfVertices(65536);
         geode->accept(mg);
 
-        osgUtil::Optimizer o;
-        o.optimize( geode,
-            osgUtil::Optimizer::INDEX_MESH |
-            osgUtil::Optimizer::VERTEX_PRETRANSFORM |
-            osgUtil::Optimizer::VERTEX_POSTTRANSFORM );
+        if (_optimizeVertexOrdering == true)
+        {
+            osgUtil::Optimizer o;
+            o.optimize( geode,
+                osgUtil::Optimizer::INDEX_MESH
+                | osgUtil::Optimizer::VERTEX_PRETRANSFORM
+                | osgUtil::Optimizer::VERTEX_POSTTRANSFORM
+                );
+        }
 
         // Add it to the group
         group->addChild( geode );
@@ -410,7 +445,7 @@ osg::Geode*
 BuildGeometryFilter::processLines(FeatureList& features, FilterContext& context)
 {
     osg::Geode* geode = new osg::Geode();
-
+    
     bool makeECEF = false;
     const SpatialReference* featureSRS = 0L;
     const SpatialReference* outputSRS = 0L;
@@ -418,12 +453,13 @@ BuildGeometryFilter::processLines(FeatureList& features, FilterContext& context)
     // set up referencing information:
     if ( context.isGeoreferenced() )
     {
-        //makeECEF   = context.getSession()->getMapInfo().isGeocentric();
         featureSRS = context.extent()->getSRS();
         outputSRS  = context.getOutputSRS();
         makeECEF = outputSRS->isGeographic();
     }
 
+    optional<Stroke> masterStroke;
+    
     for( FeatureList::iterator f = features.begin(); f != features.end(); ++f )
     {
         Feature* input = f->get();
@@ -433,8 +469,15 @@ BuildGeometryFilter::processLines(FeatureList& features, FilterContext& context)
             input->style().isSet() && input->style()->has<LineSymbol>() ? input->style()->get<LineSymbol>() :
             _style.get<LineSymbol>();
 
+        // if there's no line symbol, bail.
         if ( !line )
             continue;
+
+        // save the first stroke to use for shader generation of GPU lines if used
+        if (!masterStroke.isSet())
+        {
+            masterStroke = line->stroke().get();
+        }
 
         // run a symbol script if present.
         if ( line->script().isSet() )
@@ -442,6 +485,9 @@ BuildGeometryFilter::processLines(FeatureList& features, FilterContext& context)
             StringExpression temp( line->script().get() );
             input->eval( temp, &context );
         }
+
+        // GPU line generator (if used)
+        GPULinesOperator gpuLines(line->stroke().get());
 
         GeometryIterator parts( input->getGeometry(), true );
         while( parts.hasMore() )
@@ -453,79 +499,104 @@ BuildGeometryFilter::processLines(FeatureList& features, FilterContext& context)
                 continue;
 
             // collect all the pre-transformation HAT (Z) values.
+            // (Note: GPU Lines have doubled-up vertices, so for that case we 
+            // have to add 2 hats for every input point.)
             osg::ref_ptr<osg::FloatArray> hats = new osg::FloatArray();
-            hats->reserve( part->size() );
+
+            if (_useGPULines == true)
+                hats->reserve(part->size() * 2);
+            else
+                hats->reserve(part->size());
+
             for(Geometry::const_iterator i = part->begin(); i != part->end(); ++i )
+            {
                 hats->push_back( i->z() );
+                if (_useGPULines == true)
+                    hats->push_back(i->z());
+            }
 
             // if the underlying geometry is a ring (or a polygon), use a line loop; otherwise
             // use a line strip.
-            GLenum primMode = dynamic_cast<Ring*>(part) ? GL_LINE_LOOP : GL_LINE_STRIP;
-
+            bool isRing = (dynamic_cast<Ring*>(part) != 0L);
+            
             // resolve the color:
             osg::Vec4f primaryColor = line->stroke()->color();
 
-            osg::ref_ptr<osg::Geometry> osgGeom = new osg::Geometry();
-            osgGeom->setUseVertexBufferObjects( true );
-            osgGeom->setUseDisplayList( false );
-
-            // embed the feature name if requested. Warning: blocks geometry merge optimization!
-            if ( _featureNameExpr.isSet() )
-            {
-                const std::string& name = input->eval( _featureNameExpr.mutable_value(), &context );
-                osgGeom->setName( name );
-            }
-
-            // build the geometry:
+            // generate the geometry:
             osg::Vec3Array* allPoints = new osg::Vec3Array();
 
             transformAndLocalize( part->asVector(), featureSRS, allPoints, outputSRS, _world2local, makeECEF );
 
-            osgGeom->addPrimitiveSet( new osg::DrawArrays(primMode, 0, allPoints->getNumElements()) );
-            osgGeom->setVertexArray( allPoints );
+            osg::ref_ptr<osg::Geometry> osgGeom;
 
-            if ( input->style().isSet() )
+            if (_useGPULines == true)
             {
-                //TODO: re-evaluate this. does it hinder geometry merging?
-                applyLineSymbology( osgGeom->getOrCreateStateSet(), line );
+                // Lines tessellated on the GPU - replacement for glLineWidth
+                osgGeom = gpuLines(allPoints, isRing);
+            }
+            else
+            {
+                // normal GL lines
+                osgGeom = new osg::Geometry();
+                osgGeom->setUseVertexBufferObjects(true);
+                osgGeom->setUseDisplayList(false);
+                GLenum primMode = isRing ? GL_LINE_LOOP : GL_LINE_STRIP;
+                osgGeom->addPrimitiveSet(new osg::DrawArrays(primMode, 0, allPoints->getNumElements()));
+                osgGeom->setVertexArray(allPoints);
             }
 
-            // subdivide the mesh if necessary to conform to an ECEF globe;
-            // but if the tessellation is set to zero, or if the style specifies a
-            // tessellation size, skip this step.
-            if ( makeECEF && !line->tessellation().isSetTo(0) && !line->tessellationSize().isSet() )
+            if (osgGeom.valid())
             {
-                double threshold = osg::DegreesToRadians( *_maxAngle_deg );
-                OE_DEBUG << "Running mesh subdivider with threshold " << *_maxAngle_deg << std::endl;
+                // embed the feature name if requested. Warning: blocks geometry merge optimization!
+                if ( _featureNameExpr.isSet() )
+                {
+                    const std::string& name = input->eval( _featureNameExpr.mutable_value(), &context );
+                    osgGeom->setName( name );
+                }
 
-                MeshSubdivider ms( _world2local, _local2world );
-                //ms.setMaxElementsPerEBO( INT_MAX );
-                if ( input->geoInterp().isSet() )
-                    ms.run( *osgGeom, threshold, *input->geoInterp() );
-                else
-                    ms.run( *osgGeom, threshold, *_geoInterp );
-            }
+                // subdivide the mesh if necessary to conform to an ECEF globe;
+                // but if the tessellation is set to zero, or if the style specifies a
+                // tessellation size, skip this step.
+                if ( makeECEF && !line->tessellation().isSetTo(0) && !line->tessellationSize().isSet() )
+                {
+                    double threshold = osg::DegreesToRadians( *_maxAngle_deg );
+                    OE_DEBUG << "Running mesh subdivider with threshold " << *_maxAngle_deg << std::endl;
 
-            // assign the primary color (PER_VERTEX required for later optimization)
-            osg::Vec4Array* colors = new osg::Vec4Array;
-            colors->assign( osgGeom->getVertexArray()->getNumElements(), primaryColor );
-            osgGeom->setColorArray( colors );
-            osgGeom->setColorBinding( osg::Geometry::BIND_PER_VERTEX );
+                    MeshSubdivider ms( _world2local, _local2world );
+                    //ms.setMaxElementsPerEBO( INT_MAX );
+                    if ( input->geoInterp().isSet() )
+                        ms.run( *osgGeom, threshold, *input->geoInterp() );
+                    else
+                        ms.run( *osgGeom, threshold, *_geoInterp );
+                }
 
-            geode->addDrawable( osgGeom );
+                // assign the primary color (PER_VERTEX required for later optimization)
+                osg::Vec4Array* colors = new osg::Vec4Array;
+                colors->assign( osgGeom->getVertexArray()->getNumElements(), primaryColor );
+                osgGeom->setColorArray( colors );
+                osgGeom->setColorBinding( osg::Geometry::BIND_PER_VERTEX );
 
-            // record the geometry's primitive set(s) in the index:
-            if ( context.featureIndex() )
-                context.featureIndex()->tagDrawable( osgGeom, input );
+                geode->addDrawable( osgGeom );
 
-            // install clamping attributes if necessary
-            if (_style.has<AltitudeSymbol>() &&
-                _style.get<AltitudeSymbol>()->technique() == AltitudeSymbol::TECHNIQUE_GPU)
-            {
-                Clamping::applyDefaultClampingAttrs( osgGeom, input->getDouble("__oe_verticalOffset", 0.0) );
-                Clamping::setHeights( osgGeom, hats.get() );
+                // record the geometry's primitive set(s) in the index:
+                if ( context.featureIndex() )
+                    context.featureIndex()->tagDrawable( osgGeom.get(), input );
+
+                // install clamping attributes if necessary
+                if (_style.has<AltitudeSymbol>() &&
+                    _style.get<AltitudeSymbol>()->technique() == AltitudeSymbol::TECHNIQUE_GPU)
+                {
+                    Clamping::applyDefaultClampingAttrs( osgGeom.get(), input->getDouble("__oe_verticalOffset", 0.0) );
+                    Clamping::setHeights( osgGeom.get(), hats.get() );
+                }
             }
         }
+    }
+
+    if (_useGPULines == true)
+    {
+        GPULinesOperator op(masterStroke.get());
+        op.installShaders(geode);
     }
 
     return geode;
@@ -607,18 +678,18 @@ BuildGeometryFilter::processPoints(FeatureList& features, FilterContext& context
             osgGeom->setColorArray( colors );
             osgGeom->setColorBinding( osg::Geometry::BIND_PER_VERTEX );
 
-            geode->addDrawable( osgGeom );
+            geode->addDrawable( osgGeom.get() );
 
             // record the geometry's primitive set(s) in the index:
             if ( context.featureIndex() )
-                context.featureIndex()->tagDrawable( osgGeom, input );
+                context.featureIndex()->tagDrawable( osgGeom.get(), input );
 
             // install clamping attributes if necessary
             if (_style.has<AltitudeSymbol>() &&
                 _style.get<AltitudeSymbol>()->technique() == AltitudeSymbol::TECHNIQUE_GPU)
             {
-                Clamping::applyDefaultClampingAttrs( osgGeom, input->getDouble("__oe_verticalOffset", 0.0) );
-                Clamping::setHeights( osgGeom, hats.get() );
+                Clamping::applyDefaultClampingAttrs( osgGeom.get(), input->getDouble("__oe_verticalOffset", 0.0) );
+                Clamping::setHeights( osgGeom.get(), hats.get() );
             }
         }
     }
@@ -964,8 +1035,6 @@ BuildGeometryFilter::tileAndBuildPolygon(Geometry*               ring,
         osgGeom->setVertexArray( geode->getDrawable(0)->asGeometry()->getVertexArray() );
         osgGeom->setPrimitiveSetList( geode->getDrawable(0)->asGeometry()->getPrimitiveSetList() );
     }
-
-    osgUtil::SmoothingVisitor::smooth( *osgGeom );
 }
 
 // builds and tessellates a polygon (with or without holes)
@@ -1135,32 +1204,77 @@ BuildGeometryFilter::buildPolygon(Geometry*               ring,
         //v->reserve(v->size() + allPoints->size());
         std::copy(allPoints->begin(), allPoints->end(), std::back_inserter(*v));
     }
-
-    //// Normal computation.
-    //// Not completely correct, but better than no normals at all. TODO: update this
-    //// to generate a proper normal vector in ECEF mode.
-    ////
-    //// We cannot accurately rely on triangles from the tessellation, since we could have
-    //// very "degraded" triangles (close to a line), and the normal computation would be bad.
-    //// In this case, we would have to average the normal vector over each triangle of the polygon.
-    //// The Newell's formula is simpler and more direct here.
-    //osg::Vec3 normal( 0.0, 0.0, 0.0 );
-    //for ( size_t i = 0; i < poly->size(); ++i )
-    //{
-    //    osg::Vec3 pi = (*poly)[i];
-    //    osg::Vec3 pj = (*poly)[ (i+1) % poly->size() ];
-    //    normal[0] += ( pi[1] - pj[1] ) * ( pi[2] + pj[2] );
-    //    normal[1] += ( pi[2] - pj[2] ) * ( pi[0] + pj[0] );
-    //    normal[2] += ( pi[0] - pj[0] ) * ( pi[1] + pj[1] );
-    //}
-    //normal.normalize();
-
-    //osg::Vec3Array* normals = new osg::Vec3Array();
-    //normals->push_back( normal );
-    //osgGeom->setNormalArray( normals );
-    //osgGeom->setNormalBinding( osg::Geometry::BIND_OVERALL );
 }
 
+
+namespace
+{
+    struct GenerateNormalFunctor
+    {
+        osg::Vec3Array* _verts;
+        osg::Vec3Array* _normals;
+
+        GenerateNormalFunctor() : _verts(0L), _normals(0L) { }
+
+        void set(osg::Vec3Array *cb, osg::Vec3Array *nb)
+        {
+            _verts = cb;
+            _normals = nb;
+        }
+
+        inline void operator()(unsigned i1, unsigned i2, unsigned i3)
+        {
+            const osg::Vec3& v1 = (*_verts)[i1];
+            const osg::Vec3& v2 = (*_verts)[i2];
+            const osg::Vec3& v3 = (*_verts)[i3];
+
+            // calc orientation of triangle.
+            osg::Vec3 normal = (v2 - v1) ^ (v3 - v1);
+            normal.normalize();
+            
+            (*_normals)[i1] += normal;
+            (*_normals)[i2] += normal;
+            (*_normals)[i3] += normal;
+        }
+
+        void finish()
+        {
+            for (unsigned i = 0; i < _normals->size(); ++i)
+            {
+                (*_normals)[i].normalize();
+            }
+        }
+    };
+
+    struct GenerateNormals : public osg::NodeVisitor
+    {
+        GenerateNormals() : osg::NodeVisitor()
+        {
+            setTraversalMode(TRAVERSE_ALL_CHILDREN);
+            setNodeMaskOverride(~0);
+        }
+
+        inline void apply(osg::Drawable& drawable)
+        {
+            osg::Geometry* geom = drawable.asGeometry();
+            if (geom)
+            {                
+                osg::Vec3Array* verts = dynamic_cast<osg::Vec3Array*>(geom->getVertexArray());
+
+                osg::Vec3Array* normals = new osg::Vec3Array(verts->size());
+                normals->setBinding(normals->BIND_PER_VERTEX);
+                
+                osg::TriangleIndexFunctor<GenerateNormalFunctor> f;
+                f.set(verts, normals);
+                geom->accept(f);
+                f.finish();
+
+                geom->setNormalArray(normals);
+            }
+            traverse(drawable);
+        }
+    };
+}
 
 osg::Node*
 BuildGeometryFilter::push( FeatureList& input, FilterContext& context )
@@ -1187,7 +1301,9 @@ BuildGeometryFilter::push( FeatureList& input, FilterContext& context )
         for(FeatureList::iterator itr = input.begin(); itr != input.end(); ++itr)
         {
             Feature* f = itr->get();
-            f->splitAcrossDateLine( splitFeatures );
+            FeatureList tmpSplit;
+            f->splitAcrossDateLine(tmpSplit);
+            splitFeatures.insert(splitFeatures.end(), tmpSplit.begin(), tmpSplit.end());
         }
     }
     else
@@ -1249,7 +1365,22 @@ BuildGeometryFilter::push( FeatureList& input, FilterContext& context )
         }
 
         if ( has_polysymbol )
-            polygons.push_back( f );
+        {
+#if 0 // Placeholder. We probably need this, but let's wait and see
+            // split polygons that cross the andimeridian:
+            if (f->getSRS()->isGeographic() &&
+                f->calculateExtent().crossesAntimeridian())
+            {
+                FeatureList temp;
+                f->splitAcrossDateLine(temp);
+                std::copy(temp.begin(), temp.end(), std::back_inserter(polygons));
+            }
+            else
+#endif
+            {
+                polygons.push_back( f );
+            }
+        }
 
         if ( has_linesymbol )
             lines.push_back( f );
@@ -1273,11 +1404,21 @@ BuildGeometryFilter::push( FeatureList& input, FilterContext& context )
             mg.setTargetMaximumNumberOfVertices(65536);
             geode->accept(mg);
 
-            osgUtil::Optimizer o;
-            o.optimize( geode.get(),
-                osgUtil::Optimizer::INDEX_MESH |
-                osgUtil::Optimizer::VERTEX_PRETRANSFORM |
-                osgUtil::Optimizer::VERTEX_POSTTRANSFORM );
+            if (_optimizeVertexOrdering == true)
+            {
+                osg::Timer_t t = osg::Timer::instance()->tick();
+                osgUtil::Optimizer o;
+                o.optimize( geode.get(),
+                    osgUtil::Optimizer::INDEX_MESH |
+                    osgUtil::Optimizer::VERTEX_PRETRANSFORM |
+                    osgUtil::Optimizer::VERTEX_POSTTRANSFORM );
+                OE_INFO << "Vertex ordering optimization took " << osg::Timer::instance()->delta_s(t, osg::Timer::instance()->tick()) << std::endl;
+            }
+
+            // Generate normals. CANNOT use OSG's SmoothingVisitor because it adds verts
+            // but ignores other vertex attribute arrays.
+            GenerateNormals gen;
+            geode->accept(gen);
 
             result->addChild( geode.get() );
         }
@@ -1299,6 +1440,7 @@ BuildGeometryFilter::push( FeatureList& input, FilterContext& context )
     if ( lines.size() > 0 )
     {
         OE_TEST << LC << "Building " << lines.size() << " lines." << std::endl;
+        
         osg::ref_ptr<osg::Geode> geode = processLines(lines, context);
         if ( geode->getNumDrawables() > 0 )
         {
@@ -1306,7 +1448,11 @@ BuildGeometryFilter::push( FeatureList& input, FilterContext& context )
             mg.setTargetMaximumNumberOfVertices(65536);
             geode->accept(mg);
 
-            applyLineSymbology( geode->getOrCreateStateSet(), line );
+            if (_useGPULines == false)
+            {
+                applyLineSymbology( geode->getOrCreateStateSet(), line );
+            }
+
             result->addChild( geode.get() );
         }
     }

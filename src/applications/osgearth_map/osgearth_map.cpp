@@ -20,21 +20,21 @@
 * along with this program.  If not, see <http://www.gnu.org/licenses/>
 */
 
-#include <osg/Notify>
-#include <osgGA/GUIEventHandler>
-#include <osgGA/StateSetManipulator>
 #include <osgViewer/Viewer>
-#include <osgViewer/ViewerEventHandlers>
+
 #include <osgEarth/MapNode>
 #include <osgEarth/ImageLayer>
+#include <osgEarth/ElevationLayer>
 #include <osgEarth/GeoTransform>
+
 #include <osgEarthUtil/EarthManipulator>
-#include <osgEarthUtil/AutoClipPlaneHandler>
-#include <osgEarthUtil/Controls>
-#include <osgEarthSymbology/Color>
+#include <osgEarthUtil/ExampleResources>
+
 #include <osgEarthDrivers/tms/TMSOptions>
 #include <osgEarthDrivers/wms/WMSOptions>
 #include <osgEarthDrivers/gdal/GDALOptions>
+#include <osgEarthDrivers/osg/OSGOptions>
+#include <osgEarthDrivers/xyz/XYZOptions>
 
 using namespace osgEarth;
 using namespace osgEarth::Drivers;
@@ -60,6 +60,14 @@ main(int argc, char** argv)
     TMSOptions elevation;
     elevation.url() = "http://readymap.org/readymap/tiles/1.0.0/116/";
     map->addLayer( new ElevationLayer("ReadyMap Elevation", elevation) );
+
+    // add a semi-transparent XYZ layer:
+    XYZOptions xyz;
+    xyz.url() = "http://[abc].tile.openstreetmap.org/{z}/{x}/{y}.png";
+    xyz.profile()->namedProfile() = "spherical-mercator";
+    ImageLayer* imageLayer = new ImageLayer("OSM", xyz);
+    imageLayer->setOpacity(0.5f);
+    map->addLayer(imageLayer);
     
     // add a local GeoTIFF inset layer:
     GDALOptions gdal;
@@ -78,31 +86,33 @@ main(int argc, char** argv)
     wmsLayerOptions.cachePolicy() = CachePolicy::NO_CACHE;
     map->addLayer(new ImageLayer(wmsLayerOptions));
 
+    // add a local simple image as a layer using the OSG driver:
+    OSGOptions osg;
+    osg.url() = "../data/osgearth.gif";
+    osg.profile()->srsString() = "wgs84";
+    osg.profile()->bounds()->set(-90.0, 10.0, -80.0, 15.0);
+    map->addLayer(new ImageLayer("Simple image", osg));
+
     // make the map scene graph:
     MapNode* node = new MapNode( map );
 
     // put a model on the map atop Pike's Peak, Colorado, USA
-    osg::Node* model = osgDB::readNodeFile("../data/red_flag.osg.10000.scale.osgearth_shadergen");
-    if (model)
+    osg::ref_ptr<osg::Node> model = osgDB::readRefNodeFile("../data/red_flag.osg.10000.scale.osgearth_shadergen");
+    if (model.valid())
     {
         GeoTransform* xform = new GeoTransform();
-        xform->addChild(model);
+        xform->addChild(model.get());
         xform->setPosition(GeoPoint(map->getSRS()->getGeographicSRS(), -105.042292, 38.840829));
         node->addChild(xform);
     }
 
     // initialize a viewer:
     osgViewer::Viewer viewer(arguments);
-    viewer.setCameraManipulator( new EarthManipulator );
+    viewer.setCameraManipulator( new EarthManipulator() );
     viewer.setSceneData( node );
 
     // add some stock OSG handlers:
-    viewer.addEventHandler(new osgViewer::StatsHandler());
-    viewer.addEventHandler(new osgViewer::WindowSizeHandler());
-    viewer.addEventHandler(new osgViewer::ThreadingHandler());
-    viewer.addEventHandler(new osgViewer::LODScaleHandler());
-    viewer.addEventHandler(new osgGA::StateSetManipulator(viewer.getCamera()->getOrCreateStateSet()));
-    viewer.addEventHandler(new osgViewer::HelpHandler(arguments.getApplicationUsage()));
+    MapNodeHelper().configureView(&viewer);
 
     return viewer.run();
 }

@@ -26,6 +26,7 @@
 #include <osgEarthFeatures/FeatureSource>
 #include <osgEarthFeatures/FeatureSourceLayer>
 #include <osgUtil/CullVisitor>
+#include <osg/BlendFunc>
 #include <cstdlib> // getenv
 
 #define LC "[SplatLayer] " << getName() << ": "
@@ -47,7 +48,7 @@ Config
 SplatLayerOptions::getConfig() const
 {
     Config conf = VisibleLayerOptions::getConfig();
-    conf.key() = "splat";
+    conf.key() = "splat_imagery";
     conf.set("land_cover_layer", _landCoverLayerName);
 
     Config zones("zones");
@@ -102,7 +103,7 @@ SplatLayer::init()
     _editMode = (::getenv("OSGEARTH_SPLAT_EDIT") != 0L); // TODO deprecate
     _gpuNoise = (::getenv("OSGEARTH_SPLAT_GPU_NOISE") != 0L); // TODO deprecate
 
-    setRenderType(osgEarth::Layer::RENDERTYPE_TILE);
+    setRenderType(osgEarth::Layer::RENDERTYPE_TERRAIN_SURFACE);
 
     for (std::vector<ZoneOptions>::const_iterator i = options().zones().begin();
         i != options().zones().end();
@@ -199,9 +200,11 @@ SplatLayer::setTerrainResources(TerrainResources* res)
 }
 
 bool
-SplatLayer::preCull(osgUtil::CullVisitor* cv) const
+SplatLayer::cull(const osgUtil::CullVisitor* cv,
+                 osg::State::StateSetStack& stateSetStack) const
 {
-    Layer::preCull(cv);
+    if (Layer::cull(cv, stateSetStack) == false)
+        return false;
 
     // If we have zones, select the current one and apply its state set.
     if (_zones.size() > 0)
@@ -224,26 +227,12 @@ SplatLayer::preCull(osgUtil::CullVisitor* cv) const
             zoneStateSet = surface->getStateSet();
         }
 
-        if (zoneStateSet == 0L)
+        if (zoneStateSet)
         {
-            OE_FATAL << LC << "ASSERTION FAILURE - zoneStateSet is null\n";
-            exit(-1);
+            stateSetStack.push_back(zoneStateSet);
         }
-        
-        cv->pushStateSet(zoneStateSet);
     }
     return true;
-}
-
-void
-SplatLayer::postCull(osgUtil::CullVisitor* cv) const
-{
-    // If we have at least one zone, one stateset was pushed in preCull,
-    // so pop it now.
-    if (_zones.size() > 0)
-        cv->popStateSet();
-
-    Layer::postCull(cv);
 }
 
 void
@@ -295,6 +284,7 @@ SplatLayer::buildStateSets()
         Zone* zone = z->get();
 
         osg::StateSet* zoneStateset = zone->getSurface()->getOrCreateStateSet();
+        zoneStateset->setName("Splat Zone");
 
         // The texture array for the zone:
         const SplatTextureDef& texdef = zone->getSurface()->getTextureDef();
@@ -309,7 +299,7 @@ SplatLayer::buildStateSets()
     }
 
     // Next set up the elements that apply to all zones:
-    osg::StateSet* stateset = new osg::StateSet();
+    osg::StateSet* stateset = this->getOrCreateStateSet();
 
     // Bind the texture image unit:
     stateset->addUniform(new osg::Uniform(SPLAT_SAMPLER, _splatBinding.unit()));
@@ -346,6 +336,10 @@ SplatLayer::buildStateSets()
     stateset->setDefine("OE_USE_NORMAL_MAP");
 
     stateset->setDefine("OE_SPLAT_COVERAGE_TEXMAT", landCoverLayer->shareTexMatUniformName().get());
+    
+    //stateset->setAttributeAndModes(
+    //    new osg::BlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ZERO),
+    //    osg::StateAttribute::OVERRIDE);
 
     SplattingShaders splatting;
     VirtualProgram* vp = VirtualProgram::getOrCreate(stateset);
@@ -353,8 +347,6 @@ SplatLayer::buildStateSets()
     splatting.load(vp, splatting.VertView);
     splatting.load(vp, splatting.Frag);
     splatting.load(vp, splatting.Util);
-
-    this->setStateSet(stateset);
 
     OE_DEBUG << LC << "Statesets built!! Ready!\n";
 }

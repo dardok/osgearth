@@ -10,35 +10,73 @@ Run this with osgearth_toc to toggle the various graticule types on and off.
     </image>  
     
     <gars_graticule name="GARS" visible="false">
+        <style type="text/css">
+                default {
+                    stroke: #ffff0059;
+                    stroke-width: 3px;
+                    text-size: 28;
+                    text-fill: #ffffff7f;
+                    text-align: left_bottom;
+                }        
+        </style>
     </gars_graticule>  
     
-    <mgrs_graticule name="MGRS" visible="false">
-        <gzd_style doc="Grid Zone Designator style (defaults shown)">
-            stroke: #808080ff;
-            stroke-width: 1.0;
-            stroke-tessellation: 20;
-            text-fill: #ffffff4c;
-            text-halo: #0000002c;
-            text-align: center-center;
-        </gzd_style>
-        <sqid_style doc="100km Square Identifier style (defaults shown)"> 
-            stroke: #ffffff4c;
-            stroke-stipple: 0x1111;
-            text-fill: #ffffff4c;
-            text-halo: #0000001c;
-            text-align: center-center;
-        </sqid_style>
+    <mgrs_graticule name="MGRS" visible="true">
+        <sqid_data>../data/mgrs_sqid.bin</sqid_data>
+        <styles>
+            <style type="text/css">
+                gzd {
+                    stroke: #ff000059;
+                    stroke-width: 4px;
+                    stroke-tessellation: 20;
+                    text-fill: #7f7f7fff;
+                    text-align: left_bottom;
+                }
+                100000 {
+                    stroke: #ffff0059;
+                    stroke-width: 3px;
+                    text-size: 28;
+                    text-fill: #ffffff7f;
+                    text-align: left_bottom;
+                }
+                10000 {
+                    stroke: #00ff0059;
+                    stroke-width: 2px;
+                }
+                1000 {
+                    stroke: #7f7fff59;
+                    stroke-width: 2px;
+                }
+                100 {
+                    stroke: #ffffff59;
+                    stroke-width: 1px;
+                }
+                10 {
+                    stroke: #ffffff59;
+                    stroke-width: 1px;
+                }
+                1 {
+                    stroke: #ffffff59;
+                    stroke-width: 1px;
+                }                
+            </style>
+        </styles>
     </mgrs_graticule>
     
-    <utm_graticule name="UTM" visible="false">
-        <gzd_style>
-            stroke: #ffffff4c;
-            stroke-width: 2px;
-            text-color: #ffffff5f;
-            text-size: 10;
-            text-align: center_center;
-        </gzd_style>
-    </utm_graticule>
+    <mgrs_graticule name="UTM" visible="false">
+        <use_default_styles>false</use_default_styles>
+        <styles>
+            <style type="text/css">
+                gzd {
+                    stroke: #ffffff59;
+                    stroke-width: 3px;
+                    stroke-tessellation: 20;
+                    text-fill: #7f7f7fff;
+                    text-align: left_bottom;
+                }        
+            </style>
+        </styles>
+    </mgrs_graticule>
     
     <geodetic_graticule name="Geodetic" visible="false">
         <color>#ffff007f</color>

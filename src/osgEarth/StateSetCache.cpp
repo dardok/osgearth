@@ -25,9 +25,7 @@
 
 #define DEFAULT_PRUNE_ACCESS_COUNT 40
 
-#if OSG_MIN_VERSION_REQUIRED(3,1,4)
-#   define STATESET_SHARING_SUPPORTED 1
-#endif
+#define STATESET_SHARING_SUPPORTED 1
 
 using namespace osgEarth;
 
@@ -461,6 +459,7 @@ StateSetCache::clear()
 {
     Threading::ScopedMutexLock lock( _mutex );
 
+    prune();
     _stateAttributeCache.clear();
     _stateSetCache.clear();
 }

@@ -679,7 +679,7 @@ MPTerrainEngineNode::createNode(const TileKey&    key,
 
     OE_DEBUG << LC << "Create node for \"" << key.str() << "\"" << std::endl;
 
-    bool accumulate    = true;  // use parent data to help build tiles if neccesary
+    bool accumulate    = true;  // use parent data to help build tiles if necessary
     bool setupChildren = true;  // prepare the tile for subdivision
 
     // create the node:
@@ -748,7 +748,7 @@ MPTerrainEngineNode::createTile( const TileKey& key )
     }
 
     model->_elevationData = TileModel::ElevationData(
-        hf,
+        hf.get(),
         GeoLocator::createForKey( sampleKey, mapInfo ),
         false );        
 
@@ -805,6 +805,7 @@ MPTerrainEngineNode::onMapModelChanged( const MapModelChange& change )
             switch( change.getAction() )
             {
             case MapModelChange::ADD_LAYER:
+            case MapModelChange::ENABLE_LAYER:
                 if (change.getImageLayer())
                     addImageLayer(change.getImageLayer());
                 else if (change.getElevationLayer())
@@ -812,6 +813,7 @@ MPTerrainEngineNode::onMapModelChanged( const MapModelChange& change )
                 break;
 
             case MapModelChange::REMOVE_LAYER:
+            case MapModelChange::DISABLE_LAYER:
                 if (change.getImageLayer())
                     removeImageLayer(change.getImageLayer());
                 else if (change.getElevationLayer())
@@ -1127,7 +1129,7 @@ MPTerrainEngineNode::updateState()
             // default min/max range uniforms. (max < min means ranges are disabled)
             terrainStateSet->addUniform( new osg::Uniform("oe_layer_minRange", 0.0f) );
             terrainStateSet->addUniform( new osg::Uniform("oe_layer_maxRange", FLT_MAX) );
-            terrainStateSet->addUniform( new osg::Uniform("oe_layer_attenuationRange", _terrainOptions.attentuationDistance().get()) );
+            terrainStateSet->addUniform( new osg::Uniform("oe_layer_attenuationRange", _terrainOptions.attenuationDistance().get()) );
             
             terrainStateSet->getOrCreateUniform(
                 "oe_min_tile_range_factor",

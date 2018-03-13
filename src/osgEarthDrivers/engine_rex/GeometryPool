@@ -71,7 +71,11 @@ namespace osgEarth { namespace Drivers { namespace RexTerrainEngine
         const osg::DrawElements* getMaskElements() const { return _maskElements.get(); }
 
 #ifdef SUPPORTS_VAO
+    #if OSG_MIN_VERSION_REQUIRED(3,5,9)
+        osg::VertexArrayState* createVertexArrayStateImplementation(osg::RenderInfo& renderInfo) const;
+    #else
         osg::VertexArrayState* createVertexArrayState(osg::RenderInfo& renderInfo) const;
+    #endif
 #endif
 
         void compileGLObjects(osg::RenderInfo& renderInfo) const;
@@ -92,6 +96,17 @@ namespace osgEarth { namespace Drivers { namespace RexTerrainEngine
 
         virtual bool supports(const osg::PrimitiveIndexFunctor&) const { return true; }
         virtual void accept(osg::PrimitiveIndexFunctor&) const;
+
+    public:
+
+        // internal function for testing
+        void drawImplementation(osg::RenderInfo& ri) const { render(GL_TRIANGLES, ri); }
+
+        // convert to a "real" geometry object
+        osg::Geometry* makeOsgGeometry();
+
+        // whether this geometry contains anything
+        bool empty() const;
 
     protected:
 
@@ -169,13 +184,14 @@ namespace osgEarth { namespace Drivers { namespace RexTerrainEngine
         void getPooledGeometry(
             const TileKey&               tileKey,
             const MapInfo&               mapInfo,
-            osg::ref_ptr<SharedGeometry>& out,
-            MaskGenerator*               maskSet=0L);
+            unsigned                     tileSize,
+            MaskGenerator*               maskSet,
+            osg::ref_ptr<SharedGeometry>& out);
 
         /**
          * The number of elements (incides) in the terrain skirt, if applicable
          */
-        int getNumSkirtElements() const;
+        int getNumSkirtElements(unsigned tileSize) const;
 
         /**
          * Are we doing pooling?
@@ -198,7 +214,7 @@ namespace osgEarth { namespace Drivers { namespace RexTerrainEngine
 
         mutable Threading::Mutex       _geometryMapMutex;
         GeometryMap                    _geometryMap;
-        unsigned                       _tileSize;
+        //unsigned                       _tileSize;
         const RexTerrainEngineOptions& _options; 
         osg::ref_ptr<ResourceReleaser> _releaser;
 
@@ -213,6 +229,7 @@ namespace osgEarth { namespace Drivers { namespace RexTerrainEngine
         SharedGeometry* createGeometry(
             const TileKey& tileKey,
             const MapInfo& mapInfo,
+            unsigned       tileSize,
             MaskGenerator* maskSet ) const;
 
         bool _enabled;

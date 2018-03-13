@@ -56,6 +56,8 @@ struct MyGraphicsContext
         traits->doubleBuffer = false;
         traits->sharedContext = 0;
         traits->pbuffer = false;
+        traits->glContextVersion = osg::DisplaySettings::instance()->getGLContextVersion();
+        traits->glContextProfileMask = osg::DisplaySettings::instance()->getGLContextProfileMask();
 
         // Intel graphics adapters dont' support pbuffers, and some of their drivers crash when
         // you try to create them. So by default we will only use the unmapped/pbuffer method
@@ -176,11 +178,7 @@ _maxTextureBufferSize   ( 0 )
         }
         else
         {
-#if OSG_MIN_VERSION_REQUIRED(3,3,3)
             _supportsGLSL = GL2->isGlslSupported;
-#else
-			_supportsGLSL = GL2->isGlslSupported();
-#endif
         }
 
         OE_INFO << LC << "Detected hardware capabilities:" << std::endl;
@@ -245,11 +243,7 @@ _maxTextureBufferSize   ( 0 )
 
         if ( _supportsGLSL )
         {
-#if OSG_MIN_VERSION_REQUIRED(3,3,3)
 			_GLSLversion = GL2->glslLanguageVersion;
-#else
-            _GLSLversion = GL2->getLanguageVersion();
-#endif
             OE_INFO << LC << "  GLSL Version = " << getGLSLVersionInt() << std::endl;
         }
 

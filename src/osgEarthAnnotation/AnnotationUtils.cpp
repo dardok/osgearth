@@ -198,19 +198,19 @@ AnnotationUtils::createTextDrawable(const std::string& text,
 
     t->setAutoRotateToScreen(false);
 
-#if OSG_MIN_VERSION_REQUIRED(3,4,0)
     t->setCullingActive(false);
-#endif
 
     t->setCharacterSizeMode( osgText::Text::OBJECT_COORDS );
-    float size = symbol && symbol->size().isSet() ? (float)(symbol->size()->eval()) : 16.0f;
-    t->setCharacterSize( size );
+    
+    float size = symbol && symbol->size().isSet() ? (float)(symbol->size()->eval()) : 16.0f;    
+
+    t->setCharacterSize( size * Registry::instance()->getDevicePixelRatio() );
     t->setColor( symbol && symbol->fill().isSet() ? symbol->fill()->color() : Color::White );
 
-    osgText::Font* font = 0L;
+    osg::ref_ptr<osgText::Font> font;
     if ( symbol && symbol->font().isSet() )
     {
-        font = osgText::readFontFile( *symbol->font() );
+        font = osgText::readRefFontFile( *symbol->font() );
     }
     if ( !font )
         font = Registry::instance()->getDefaultFont();
@@ -219,8 +219,14 @@ AnnotationUtils::createTextDrawable(const std::string& text,
     {
         t->setFont( font );
 
+        
+#if OSG_VERSION_LESS_THAN(3,5,8)
         // mitigates mipmapping issues that cause rendering artifacts for some fonts/placement
         font->setGlyphImageMargin( 2 );
+#endif
+
+        // OSG 3.4.1+ adds a program, so we remove it since we're using VPs.
+        t->setStateSet(0L);
     }
 
     float resFactor = 2.0f;
@@ -295,8 +301,8 @@ AnnotationUtils::createImageGeometry(osg::Image*       image,
     geom->setUseVertexBufferObjects(true);
     geom->setStateSet(dstate);
 
-    float s = scale * image->s();
-    float t = scale * image->t();
+    float s = Registry::instance()->getDevicePixelRatio() * scale * image->s();
+    float t = Registry::instance()->getDevicePixelRatio() * scale * image->t();
 
     float x0 = (float)pixelOffset.x() - s/2.0;
     float y0 = (float)pixelOffset.y() - t/2.0;
@@ -807,8 +813,7 @@ AnnotationUtils::getAltitudePolicy(const Style& style, AltitudePolicy& out)
                 out.draping       = alt->technique() == AltitudeSymbol::TECHNIQUE_DRAPE;
 
                 // for instance/markers, GPU clamping falls back on SCENE clamping.
-                if (out.gpuClamping &&
-                    (style.has<InstanceSymbol>() || style.has<MarkerSymbol>()))
+                if (out.gpuClamping && style.has<InstanceSymbol>())
                 {
                     out.gpuClamping   = false;
                     out.sceneClamping = true;
@@ -837,30 +842,10 @@ AnnotationUtils::installOverlayParent(osg::Node* node, const Style& style)
     // GPU-clamped geometry
     else if ( ap.gpuClamping )
     {
-        ClampableNode* clampable = new ClampableNode( 0L );
+        ClampableNode* clampable = new ClampableNode();
         clampable->addChild( node );
         node = clampable;
-
-        const RenderSymbol* render = style.get<RenderSymbol>();
-        if ( render && render->depthOffset().isSet() )
-        {
-            clampable->setDepthOffsetOptions( *render->depthOffset() );
-        }
     }
-
-#if 0 // TODO -- constuct a callback instead.
-
-    // scenegraph-clamped geometry
-    else if ( ap.sceneClamping )
-    {
-        // save for later when we need to reclamp the mesh on the CPU
-        _altitude = style.get<AltitudeSymbol>();
-
-        // activate the terrain callback:
-        setCPUAutoClamping( true );
-    }
-
-#endif
 
     return node;
 }

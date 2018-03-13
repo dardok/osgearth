@@ -27,6 +27,7 @@
 #include <osgEarthUtil/EarthManipulator>
 #include <osgEarthUtil/Controls>
 #include <osgEarthUtil/ExampleResources>
+#include <osgEarthUtil/ViewFitter>
 #include <osgViewer/Viewer>
 #include <osgViewer/ViewerEventHandlers>
 #include <osgGA/StateSetManipulator>
@@ -45,6 +46,8 @@ static Grid* s_activeBox;
 static Grid* s_inactiveBox;
 static bool s_updateRequired = true;
 static MapModelChange s_change;
+static EarthManipulator* s_manip;
+static osgViewer::View* s_view;
 
 typedef std::map<std::string, ConfigOptions> InactiveLayers;
 static InactiveLayers _inactive;
@@ -133,9 +136,13 @@ main( int argc, char** argv )
 
     // configure the viewer.
     osgViewer::Viewer viewer( arguments );
+    s_view = &viewer;
 
     // install a motion model
-    viewer.setCameraManipulator( new osgEarth::Util::EarthManipulator() );
+    viewer.setCameraManipulator( s_manip = new osgEarth::Util::EarthManipulator() );
+
+    // disable the small-feature culling (so text will work)
+    viewer.getCamera()->setSmallFeatureCullingPixelSize(-1.0f);
 
     // Load an earth file 
     osg::Node* loaded = osgEarth::Util::MapNodeHelper().load(arguments, &viewer);
@@ -148,10 +155,6 @@ main( int argc, char** argv )
     // the displayed Map:
     s_activeMap = mapNode->getMap();
     s_activeMap->addMapCallback( new MyMapListener() );
-
-    // a Map to hold inactive layers (layers that have been removed from the displayed Map)
-    //s_inactiveMap = new Map();
-    //s_inactiveMap->addMapCallback( new MyMapListener() );
 
     osg::Group* root = new osg::Group();
 
@@ -174,6 +177,17 @@ main( int argc, char** argv )
 
 //------------------------------------------------------------------------
 
+struct EnableDisableHandler : public ControlEventHandler
+{
+    EnableDisableHandler( Layer* layer ) : _layer(layer) { }
+    void onClick( Control* control )
+    {
+        _layer->setEnabled( !_layer->getEnabled() );
+        updateControlPanel();
+    }
+    Layer* _layer;
+};
+
 struct ToggleLayerVisibility : public ControlEventHandler
 {
     ToggleLayerVisibility( VisibleLayer* layer ) : _layer(layer) { }
@@ -186,22 +200,12 @@ struct ToggleLayerVisibility : public ControlEventHandler
 
 struct LayerOpacityHandler : public ControlEventHandler
 {
-    LayerOpacityHandler( ImageLayer* layer ) : _layer(layer) { }
+    LayerOpacityHandler( VisibleLayer* layer ) : _layer(layer) { }
     void onValueChanged( Control* control, float value )
     {
         _layer->setOpacity( value );
     }
-    ImageLayer* _layer;
-};
-
-struct ModelLayerOpacityHandler : public ControlEventHandler
-{
-    ModelLayerOpacityHandler( ModelLayer* layer ) : _layer(layer) { }
-    void onValueChanged( Control* control, float value )
-    {
-        _layer->setOpacity( value );
-    }
-    ModelLayer* _layer;
+    VisibleLayer* _layer;
 };
 
 struct AddLayerHandler : public ControlEventHandler
@@ -244,6 +248,28 @@ struct MoveLayerHandler : public ControlEventHandler
     int _newIndex;
 };
 
+struct ZoomLayerHandler : public ControlEventHandler
+{
+    ZoomLayerHandler(Layer* layer) : _layer(layer) { }
+    void onClick(Control* control)
+    {
+        const GeoExtent& extent = _layer->getExtent();
+        if (extent.isValid())
+        {
+            ViewFitter fitter(s_activeMap->getSRS(), s_view->getCamera());
+            std::vector<GeoPoint> points;
+            points.push_back(GeoPoint(extent.getSRS(), extent.west(), extent.south()));
+            points.push_back(GeoPoint(extent.getSRS(), extent.east(), extent.north()));
+            Viewpoint vp;
+            if (fitter.createViewpoint(points, vp))
+            {
+                s_manip->setViewpoint(vp, 2.0);
+            }
+        }
+    }
+    Layer* _layer;
+};
+
 //------------------------------------------------------------------------
 
 
@@ -253,9 +279,8 @@ createControlPanel( osgViewer::View* view )
     ControlCanvas* canvas = ControlCanvas::getOrCreate( view );
 
     s_masterGrid = new Grid();
-    s_masterGrid->setBackColor(0,0,0,0.5);
-    s_masterGrid->setMargin( 10 );
-    s_masterGrid->setPadding( 10 );
+    s_masterGrid->setMargin( 5 );
+    s_masterGrid->setPadding( 5 );
     s_masterGrid->setChildSpacing( 10 );
     s_masterGrid->setChildVertAlign( Control::ALIGN_CENTER );
     s_masterGrid->setAbsorbEvents( true );
@@ -293,17 +318,25 @@ addLayerItem( Grid* grid, int layerIndex, int numLayers, Layer* layer, bool isAc
     int gridRow = grid->getNumRows();
 
     VisibleLayer* visibleLayer = dynamic_cast<VisibleLayer*>(layer);
-    ImageLayer* imageLayer = dynamic_cast<ImageLayer*>(layer);
-    ElevationLayer* elevationLayer = dynamic_cast<ElevationLayer*>(layer);
-    TerrainLayer* terrainLayer = dynamic_cast<TerrainLayer*>(layer);
-    ModelLayer* modelLayer = dynamic_cast<ModelLayer*>(layer);
 
-    // a checkbox to enable/disable the layer:
+    // only show layers that derive from VisibleLayer
+    if (!visibleLayer)
+        return;
+
+    ImageLayer* imageLayer = dynamic_cast<ImageLayer*>(layer);
+
+    // don't show hidden coverage layers
+    if (imageLayer && imageLayer->isCoverage() && !imageLayer->getVisible())
+        return;
+    
+    ElevationLayer* elevationLayer = dynamic_cast<ElevationLayer*>(layer);
+
+    // a checkbox to toggle the layer's visibility:
     if (visibleLayer && layer->getEnabled() && !(imageLayer && imageLayer->isCoverage()))
     {
-        CheckBoxControl* enabled = new CheckBoxControl( visibleLayer->getVisible() );
-        enabled->addEventHandler( new ToggleLayerVisibility(visibleLayer) );
-        grid->setControl( gridCol, gridRow, enabled );
+        CheckBoxControl* visibility = new CheckBoxControl( visibleLayer->getVisible() );
+        visibility->addEventHandler( new ToggleLayerVisibility(visibleLayer) );
+        grid->setControl( gridCol, gridRow, visibility );
     }
     gridCol++;
 
@@ -329,14 +362,25 @@ addLayerItem( Grid* grid, int layerIndex, int numLayers, Layer* layer, bool isAc
     grid->setControl( gridCol, gridRow, statusLabel );
     gridCol++;
 
-    if (imageLayer && layer->getEnabled() && imageLayer->getVisible())
+    if (visibleLayer && !elevationLayer && visibleLayer->getEnabled())
     {
         // an opacity slider
-        HSliderControl* opacity = new HSliderControl( 0.0f, 1.0f, imageLayer->getOpacity() );
+        HSliderControl* opacity = new HSliderControl( 0.0f, 1.0f, visibleLayer->getOpacity() );
         opacity->setWidth( 125 );
         opacity->setHeight( 12 );
-        opacity->addEventHandler( new LayerOpacityHandler(imageLayer) );
+        opacity->addEventHandler( new LayerOpacityHandler(visibleLayer) );
         grid->setControl( gridCol, gridRow, opacity );
+    }
+    gridCol++;
+
+    // zoom button
+    if (layer->getExtent().isValid())
+    {
+        LabelControl* zoomButton = new LabelControl("GO", 14);
+        zoomButton->setBackColor( .4,.4,.4,1 );
+        zoomButton->setActiveColor( .8,0,0,1 );
+        zoomButton->addEventHandler( new ZoomLayerHandler(layer) );
+        grid->setControl( gridCol, gridRow, zoomButton );
     }
     gridCol++;
 
@@ -367,9 +411,22 @@ addLayerItem( Grid* grid, int layerIndex, int numLayers, Layer* layer, bool isAc
     addRemove->setBackColor( .4,.4,.4,1 );
     addRemove->setActiveColor( .8,0,0,1 );
     addRemove->addEventHandler( new RemoveLayerHandler(layer) );
-
     grid->setControl( gridCol, gridRow, addRemove );
     gridCol++;
+
+    // enable/disable button
+    LabelControl* enableDisable = new LabelControl(layer->getEnabled() ? "DISABLE" : "ENABLE", 14);
+    enableDisable->setHorizAlign( Control::ALIGN_CENTER );
+    enableDisable->setBackColor( .4,.4,.4,1 );
+    enableDisable->setActiveColor( .8,0,0,1 );
+    enableDisable->addEventHandler( new EnableDisableHandler(layer) );
+    grid->setControl( gridCol, gridRow, enableDisable );
+    gridCol++;
+
+    if (layer->getStatus().isError())
+    {
+        grid->setControl(gridCol, gridRow, new LabelControl(layer->getStatus().message(), osg::Vec4(1,.2,.2,1)));
+    }
 }
 
 void
@@ -429,4 +486,6 @@ updateControlPanel()
             createInactiveLayerItem(s_inactiveBox, row++, i->first, i->second);
         }
     }
+
+    s_inactiveBox->setVisible(!_inactive.empty());
 }

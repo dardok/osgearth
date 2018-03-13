@@ -25,6 +25,8 @@ using namespace osgEarth::Symbology;
 
 #define LC "[FeatureModelLayer] "
 
+#define OE_TEST OE_NULL
+
 REGISTER_OSGEARTH_LAYER(feature_model, FeatureModelLayer);
 
 //...........................................................................
@@ -89,8 +91,18 @@ FeatureModelLayer::init()
 
     _root = new osg::Group();
 
+    // Assign the layer's state set to the root node:
+    _root->setStateSet(this->getOrCreateStateSet());
+
     // Callbacks for paged data
     _sgCallbacks = new SceneGraphCallbacks();
+
+    // Graph needs rebuilding
+    _graphDirty = true;
+
+    // Depth sorting by default
+    getOrCreateStateSet()->setRenderingHint(osg::StateSet::TRANSPARENT_BIN);
+
 }
 
 void
@@ -111,6 +123,8 @@ FeatureModelLayer::setFeatureSourceLayer(FeatureSourceLayer* layer)
 void
 FeatureModelLayer::setFeatureSource(FeatureSource* source)
 {
+    OE_TEST << LC << "setFeatureSource" << std::endl;
+
     if (_featureSource != source)
     {
         if (source)
@@ -124,21 +138,36 @@ FeatureModelLayer::setFeatureSource(FeatureSource* source)
             return;
         }
 
+        // feature source changed, so the graph needs rebuilding
+        _graphDirty = true;
+
+        // create the scene graph
         create();
     }
+}
+
+void
+FeatureModelLayer::setCreateFeatureNodeFactoryCallback(CreateFeatureNodeFactoryCallback* value)
+{
+    _createFactoryCallback = value;
+}
+
+FeatureModelLayer::CreateFeatureNodeFactoryCallback*
+FeatureModelLayer::getCreateFeatureNodeFactoryCallback() const
+{
+    return _createFactoryCallback.get();
 }
 
 osg::Node*
 FeatureModelLayer::getOrCreateNode()
 {
-    OE_DEBUG << LC << "getNode\n";
     return _root.get();
 }
 
 const Status&
 FeatureModelLayer::open()
 {
-    OE_DEBUG << LC << "open\n";
+    OE_TEST << LC << "open" << std::endl;
 
     if (options().featureSource().isSet())
     {
@@ -157,15 +186,28 @@ FeatureModelLayer::open()
     return VisibleLayer::open();
 }
 
+const GeoExtent&
+FeatureModelLayer::getExtent() const
+{
+    static GeoExtent s_invalid;
+
+    return _featureSource.valid() && _featureSource->getFeatureProfile() ?
+        _featureSource->getFeatureProfile()->getExtent() :
+        s_invalid;
+}
+
 void
 FeatureModelLayer::addedToMap(const Map* map)
 {
-    OE_DEBUG << LC << "addedToMap\n";
+    OE_TEST << LC << "addedToMap" << std::endl;
 
     // Save a reference to the map since we'll need it to
     // create a new session object later.
-    _session = new Session(map);
-    _session->setStyles( options().styles().get() );
+    _session = new Session(
+        map, 
+        options().styles().get(), 
+        0L,  // feature source - will set later
+        getReadOptions());
 
     if (options().featureSourceLayer().isSet())
     {
@@ -176,6 +218,7 @@ FeatureModelLayer::addedToMap(const Map* map)
             &FeatureModelLayer::setFeatureSourceLayer);
     }
 
+    // re-create the graph if necessary.
     create();
 }
 
@@ -188,29 +231,52 @@ FeatureModelLayer::removedFromMap(const Map* map)
 void
 FeatureModelLayer::create()
 {
-    if (_featureSource.valid() && _session.valid())
+    OE_TEST << LC << "create" << std::endl;
+
+    if (_graphDirty)
     {
-        // connect the session to the features:
-        _session->setFeatureSource(_featureSource.get());
+        if (_featureSource.valid() && _session.valid())
+        {
+            // connect the session to the features:
+            _session->setFeatureSource(_featureSource.get());
 
-        // the factory builds nodes for the model graph:
-        FeatureNodeFactory* nodeFactory = new GeomFeatureNodeFactory(options());
+            // the factory builds nodes for the model graph:
+            FeatureNodeFactory* nodeFactory = createFeatureNodeFactory();
 
-        // group that will build all the feature geometry:
-        FeatureModelGraph* fmg = new FeatureModelGraph(
-            _session.get(),
-            options(),
-            nodeFactory,
-            _sgCallbacks.get());
+            // group that will build all the feature geometry:
+            FeatureModelGraph* fmg = new FeatureModelGraph(
+                _session.get(),
+                options(),
+                nodeFactory,
+                _sgCallbacks.get());
 
-        _root->removeChildren(0, _root->getNumChildren());
-        _root->addChild(fmg);
+            _root->removeChildren(0, _root->getNumChildren());
+            _root->addChild(fmg);
 
-        setStatus(Status::OK());
+            // clear the dirty flag.
+            _graphDirty = false;
+
+            setStatus(Status::OK());
+        }
+
+        else if (getStatus().isOK())
+        {
+            setStatus(Status(Status::ConfigurationError));
+        }
     }
+}
 
-    else if (getStatus().isOK())
-    {
-        setStatus(Status(Status::ConfigurationError));
-    }
+FeatureNodeFactory*
+FeatureModelLayer::createFeatureNodeFactoryImplementation() const
+{
+    return new GeomFeatureNodeFactory(options());
+}
+
+FeatureNodeFactory*
+FeatureModelLayer::createFeatureNodeFactory()
+{
+    if (_createFactoryCallback.valid())
+        return _createFactoryCallback->createFeatureNodeFactory(options());
+    else
+        return createFeatureNodeFactoryImplementation();
 }

@@ -9,7 +9,7 @@ You must have the mapnik vector tiles driver built by including the protobuf lib
     <options>
         <terrain driver="rex"/>
     </options>
-    
+
     <feature_source name="buildings-data" driver="tfs">
         <url>http://readymap.org/osm-buildings/</url>
         <min_level>14</min_level>
