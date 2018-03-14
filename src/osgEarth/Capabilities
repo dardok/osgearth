@@ -39,6 +39,8 @@ namespace osgEarth
     class OSGEARTH_EXPORT Capabilities : public osg::Referenced
     {
     public:
+        Capabilities(osg::GraphicsContext *);
+
         /** maximum # of texture units exposed in the fixed-function pipeline */
         int getMaxFFPTextureUnits() const { return _maxFFPTextureUnits; }
 
@@ -195,6 +197,7 @@ namespace osgEarth
         bool _supportsTextureBuffer;
         int  _maxTextureBufferSize;
 
+        void initialize(osg::GraphicsContext *gc);
     public:
         friend class Registry;
     };

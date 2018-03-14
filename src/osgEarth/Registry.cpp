@@ -496,10 +496,10 @@ Registry::hasCapabilities() const
 }
 
 const Capabilities&
-Registry::getCapabilities() const
+Registry::getCapabilities(osg::GraphicsContext *gc) const
 {
     if ( !_caps.valid() )
-        const_cast<Registry*>(this)->initCapabilities();
+        const_cast<Registry*>(this)->initCapabilities(gc);
 
     return *_caps;
 }
@@ -511,11 +511,11 @@ Registry::setCapabilities( Capabilities* caps )
 }
 
 void
-Registry::initCapabilities()
+Registry::initCapabilities(osg::GraphicsContext *gc)
 {
     ScopedLock<Mutex> lock( _capsMutex ); // double-check pattern (see getCapabilities)
     if ( !_caps.valid() )
-        _caps = new Capabilities();
+        _caps = gc ? new Capabilities(gc) : new Capabilities();
 }
 
 ShaderFactory*

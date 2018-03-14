@@ -147,7 +147,7 @@ namespace osgEarth
          * The graphics hardware capabilities for this platform.
          */
         bool hasCapabilities() const;
-        const Capabilities& getCapabilities() const;
+        const Capabilities& getCapabilities(osg::GraphicsContext *gc = NULL) const;
         void setCapabilities( Capabilities* caps );
         static const Capabilities& capabilities() { return instance()->getCapabilities(); }
 
@@ -330,7 +330,7 @@ namespace osgEarth
         // system capabilities:
         osg::ref_ptr< Capabilities > _caps;
         mutable Threading::Mutex     _capsMutex;
-        void initCapabilities();
+        void initCapabilities(osg::GraphicsContext *gc);
 
         osg::ref_ptr<osgDB::Options> _defaultOptions;
 
