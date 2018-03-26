@@ -105,6 +105,21 @@ FeatureModelLayer::init()
 
 }
 
+void FeatureModelLayer::setFeatureModelLayerOptions(const FeatureModelLayerOptions& options)
+{
+    *_options = options;
+    dirty();
+}
+
+void FeatureModelLayer::dirty()
+{
+    // feature source changed, so the graph needs rebuilding
+    _graphDirty = true;
+
+    // create the scene graph
+    create();
+}
+
 void
 FeatureModelLayer::setFeatureSourceLayer(FeatureSourceLayer* layer)
 {
@@ -138,11 +153,7 @@ FeatureModelLayer::setFeatureSource(FeatureSource* source)
             return;
         }
 
-        // feature source changed, so the graph needs rebuilding
-        _graphDirty = true;
-
-        // create the scene graph
-        create();
+        dirty();
     }
 }
 
