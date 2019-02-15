@@ -38,6 +38,8 @@ ENDIF(WIN32)
 SET(LIB_NAME osgEarth)
 
 set(TARGET_GLSL
+    CascadeDraping.glsl
+    ClipPlane.glsl
     DepthOffset.vert.glsl
     Draping.vert.glsl
     Draping.frag.glsl
@@ -45,8 +47,14 @@ set(TARGET_GLSL
     GPUClamping.vert.lib.glsl
     GPUClamping.frag.glsl
     Instancing.vert.glsl
+    LineDrawable.glsl
     PhongLighting.vert.glsl
-    PhongLighting.frag.glsl)
+    PhongLighting.frag.glsl
+    PointDrawable.glsl
+    Text.vert.glsl
+    Text.frag.glsl
+    Text_legacy.glsl
+    )
 
 set(SHADERS_CPP "${CMAKE_CURRENT_BINARY_DIR}/AutoGenShaders.cpp")
 
@@ -68,6 +76,7 @@ SET(LIB_PUBLIC_HEADERS
     CachePolicy
     CacheSeed
     Capabilities
+    CascadeDrapingDecorator
     Clamping
     ClampableNode
     ClampingTechnique
@@ -103,8 +112,10 @@ SET(LIB_PUBLIC_HEADERS
     GeoTransform
     GeometryClamper
     GLSLChunker
+    GLUtils
     HeightFieldUtils
     Horizon
+    HorizonClipPlane
     HTTPClient
     ImageLayer
     ImageMosaic
@@ -118,6 +129,7 @@ SET(LIB_PUBLIC_HEADERS
     Layer
     LayerListener
     Lighting
+    LineDrawable
     LineFunctor
     Locators
     LocalTangentPlane
@@ -131,7 +143,6 @@ SET(LIB_PUBLIC_HEADERS
     MapNodeOptions
     MapOptions
     MaskLayer
-    MaskNode
     MaskSource
     Memory
     MemCache
@@ -150,9 +161,9 @@ SET(LIB_PUBLIC_HEADERS
     PhongLightingEffect
     Picker
     PluginLoader
+    PointDrawable
     PrimitiveIntersector
     Profile
-    Profiler
     Progress
     Random
     Registry
@@ -164,15 +175,15 @@ SET(LIB_PUBLIC_HEADERS
     ShaderFactory
     ShaderGenerator
     ShaderLoader
+    ShaderMerger
     ShaderUtils
     Shadowing
-    SharedSARepo
     SimplexNoise
     SpatialReference
     StateSetCache
-    StateSetLOD
     Status
     StringUtils
+    TDTiles
     TaskService
     Terrain
     TerrainEffect
@@ -184,8 +195,8 @@ SET(LIB_PUBLIC_HEADERS
     TerrainTileModel
     TerrainTileModelFactory
     TerrainTileNode
-    TileKeyDataStore
     Tessellator
+    Text
     TileKey
     TileHandler
     TileRasterizer
@@ -203,7 +214,6 @@ SET(LIB_PUBLIC_HEADERS
     Viewpoint
     VirtualProgram
     VisibleLayer
-    WrapperLayer
     XmlUtils
 )
 
@@ -247,6 +257,7 @@ set(TARGET_SRC
     CachePolicy.cpp
     CacheSeed.cpp
     Capabilities.cpp
+    CascadeDrapingDecorator.cpp
     Clamping.cpp
     ClampableNode.cpp
     ClampingTechnique.cpp
@@ -277,8 +288,10 @@ set(TARGET_SRC
     GeoTransform.cpp
     GeometryClamper.cpp
     GLSLChunker.cpp
+    GLUtils.cpp
     HeightFieldUtils.cpp
     Horizon.cpp
+    HorizonClipPlane.cpp
     HTTPClient.cpp
     ImageLayer.cpp
     ImageMosaic.cpp
@@ -291,6 +304,7 @@ set(TARGET_SRC
     LandCoverLayer.cpp
     Layer.cpp
     Lighting.cpp
+    LineDrawable.cpp
     Locators.cpp
     LocalTangentPlane.cpp
     Map.cpp
@@ -301,7 +315,6 @@ set(TARGET_SRC
     MapNodeOptions.cpp
     MapOptions.cpp
     MaskLayer.cpp
-    MaskNode.cpp
     MaskSource.cpp
     MemCache.cpp
     Memory.cpp
@@ -317,9 +330,9 @@ set(TARGET_SRC
     PagedNode.cpp
     PatchLayer.cpp
     PhongLightingEffect.cpp
+    PointDrawable.cpp
     PrimitiveIntersector.cpp
     Profile.cpp
-    Profiler.cpp
     Progress.cpp
     Random.cpp
     Registry.cpp
@@ -330,15 +343,16 @@ set(TARGET_SRC
     ShaderFactory.cpp
     ShaderGenerator.cpp
     ShaderLoader.cpp
+    ShaderMerger.cpp
     ShaderUtils.cpp
     Shadowing.cpp
     SimplexNoise.cpp
     SpatialReference.cpp
     StateSetCache.cpp
-    StateSetLOD.cpp
     Status.cpp
     StringUtils.cpp
     TaskService.cpp
+    TDTiles.cpp
     Terrain.cpp
     TerrainLayer.cpp
     TerrainOptions.cpp
@@ -347,6 +361,7 @@ set(TARGET_SRC
     TerrainTileModel.cpp
     TerrainTileModelFactory.cpp
     Tessellator.cpp
+    Text.cpp
     TextureBufferSerializer.cpp
     TileKey.cpp
     TileHandler.cpp

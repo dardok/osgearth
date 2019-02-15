@@ -1,6 +1,6 @@
 /* -*-c++-*- */
-/* osgEarth - Dynamic map generation toolkit for OpenSceneGraph
- * Copyright 2016 Pelican Mapping
+/* osgEarth - Geospatial SDK for OpenSceneGraph
+ * Copyright 2018 Pelican Mapping
  * http://osgearth.org
  *
  * osgEarth is free software; you can redistribute it and/or modify
@@ -22,10 +22,8 @@
 #include <osgEarthSymbology/PointSymbol>
 #include <osgEarth/ECEF>
 #include <osgEarth/Registry>
+#include <osgEarth/GLUtils>
 #include <osg/MatrixTransform>
-#include <osg/Point>
-#include <osg/LineWidth>
-#include <osg/LineStipple>
 #include <osgEarth/VirtualProgram>
 
 using namespace osgEarth;
@@ -331,40 +329,13 @@ FeaturesToNodeFilter::createDelocalizeGroup( const osg::Matrixd &local2world ) c
     return group;
 }
 
-
-void 
-FeaturesToNodeFilter::applyLineSymbology(osg::StateSet*    stateset, 
-                                         const LineSymbol* line)
-{
-    if ( line && line->stroke().isSet() )
-    {
-        if ( line->stroke()->width().isSet() )
-        {
-            float width = std::max( 1.0f, *line->stroke()->width() );
-            if ( width != 1.0f )
-            {
-                stateset->setAttributeAndModes(new osg::LineWidth(width), 1);
-            }
-        }
-
-        if ( line->stroke()->stipplePattern().isSet() )
-        {
-            stateset->setAttributeAndModes(
-                new osg::LineStipple(
-                    line->stroke()->stippleFactor().value(),
-                    line->stroke()->stipplePattern().value()),
-                osg::StateAttribute::ON );
-        }
-    }
-}
-
 void 
 FeaturesToNodeFilter::applyPointSymbology(osg::StateSet*     stateset, 
                                           const PointSymbol* point)
 {
     if ( point )
     {
-        float size = std::max( 0.1f, *point->size() );
-        stateset->setAttributeAndModes(new osg::Point(size), 1);
+        float size = osg::maximum( 0.1f, *point->size() );
+        GLUtils::setPointSize(stateset, size, 1);
     }
 }

@@ -1,6 +1,6 @@
 /* -*-c++-*- */
-/* osgEarth - Dynamic map generation toolkit for OpenSceneGraph
- * Copyright 2016 Pelican Mapping
+/* osgEarth - Geospatial SDK for OpenSceneGraph
+ * Copyright 2018 Pelican Mapping
  * http://osgearth.org
  *
  * osgEarth is free software; you can redistribute it and/or modify
@@ -17,12 +17,8 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>
  */
 #include <osgEarth/CompositeTileSource>
-#include <osgEarth/ImageUtils>
-#include <osgEarth/StringUtils>
 #include <osgEarth/Registry>
 #include <osgEarth/Progress>
-#include <osgEarth/HeightFieldUtils>
-#include <osgDB/FileNameUtils>
 
 #define LC "[CompositeTileSource] "
 
@@ -155,7 +151,7 @@ CompositeTileSource::createImage(const TileKey&    key,
     {
         ImageLayer* layer = itr->get();
         ImageInfo imageInfo;
-        imageInfo.dataInExtents = layer->mayHaveDataInExtent(key.getExtent());
+        imageInfo.dataInExtents = layer->mayHaveData(key); //.getExtent());
         imageInfo.opacity = layer->getOpacity();
 
         if (imageInfo.dataInExtents)
@@ -167,7 +163,7 @@ CompositeTileSource::createImage(const TileKey&    key,
             }
 
             // If the progress got cancelled or it needs a retry then return NULL to prevent this tile from being built and cached with incomplete or partial data.
-            if (progress && (progress->isCanceled() || progress->needsRetry()))
+            if (progress && progress->isCanceled())
             {
                 OE_DEBUG << LC << " createImage was cancelled or needs retry for " << key.str() << std::endl;
                 return 0L;
@@ -214,7 +210,7 @@ CompositeTileSource::createImage(const TileKey&    key,
                     }
 
                     // If the progress got cancelled or it needs a retry then return NULL to prevent this tile from being built and cached with incomplete or partial data.
-                    if (progress && (progress->isCanceled() || progress->needsRetry()))
+                    if (progress && progress->isCanceled())
                     {
                         OE_DEBUG << LC << " createImage was cancelled or needs retry for " << key.str() << std::endl;
                         return 0L;
@@ -456,9 +452,9 @@ CompositeTileSource::initialize(const osgDB::Options* dbOptions)
                     getDataExtents().push_back( dataExtent );
                 }
             }            
-        }
 
-        ++i;
+            ++i;
+        }
     }
 
     // If there is no profile set by the user or by a component, fall back

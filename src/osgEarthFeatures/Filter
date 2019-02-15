@@ -1,6 +1,6 @@
 /* -*-c++-*- */
-/* osgEarth - Dynamic map generation toolkit for OpenSceneGraph
- * Copyright 2016 Pelican Mapping
+/* osgEarth - Geospatial SDK for OpenSceneGraph
+ * Copyright 2018 Pelican Mapping
  * http://osgearth.org
  *
  * osgEarth is free software; you can redistribute it and/or modify
@@ -213,7 +213,6 @@ namespace osgEarth { namespace Features
             const osg::Matrixd&            world2local,
             bool                           toECEF );
 
-        void applyLineSymbology(osg::StateSet*, const class LineSymbol*);
         void applyPointSymbology(osg::StateSet*, const class PointSymbol*);
 
         osg::Matrixd _world2local, _local2world;   // for coordinate localization

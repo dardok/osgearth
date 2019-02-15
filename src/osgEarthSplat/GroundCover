@@ -1,6 +1,6 @@
 /* -*-c++-*- */
-/* osgEarth - Dynamic map generation toolkit for OpenSceneGraph
- * Copyright 2016 Pelican Mapping
+/* osgEarth - Geospatial SDK for OpenSceneGraph
+ * Copyright 2018 Pelican Mapping
  * http://osgearth.org
  *
  * osgEarth is free software; you can redistribute it and/or modify
@@ -175,7 +175,8 @@ namespace osgEarth { namespace Splat
         GroundCoverBillboards _billboards;
 
     public:
-        bool configure(const ConfigOptions& conf, const osgDB::Options* dbo);
+        typedef std::map<URI, osg::ref_ptr<osg::Image> > ImageCache;
+        bool configure(const ConfigOptions& conf, const osgDB::Options* dbo, ImageCache& cache);
     };
 
     typedef std::vector< osg::ref_ptr<GroundCoverBiome> > GroundCoverBiomes;
@@ -256,5 +257,8 @@ namespace osgEarth { namespace Splat
     };
 
 } } // namespace osgEarth::Splat
+
+OSGEARTH_SPECIALIZE_CONFIG(osgEarth::Splat::GroundCoverOptions);
+OSGEARTH_SPECIALIZE_CONFIG(osgEarth::Splat::GroundCoverBiomeOptions);
 
 #endif // OSGEARTH_PROCEDURAL_GroundCover

@@ -1,6 +1,6 @@
 /* -*-c++-*- */
-/* osgEarth - Dynamic map generation toolkit for OpenSceneGraph
- * Copyright 2016 Pelican Mapping
+/* osgEarth - Geospatial SDK for OpenSceneGraph
+ * Copyright 2018 Pelican Mapping
  * http://osgearth.org
  *
  * osgEarth is free software; you can redistribute it and/or modify
@@ -21,12 +21,8 @@
 #include <osgEarth/Registry>
 #include <osgEarth/Cube>
 #include <osgEarth/LocalTangentPlane>
-#include <osgEarth/ECEF>
-#include <osgEarth/ThreadingUtils>
-#include <osg/Notify>
-#include <ogr_api.h>
 #include <ogr_spatialref.h>
-#include <algorithm>
+#include <cpl_conv.h>
 
 #define LC "[SpatialReference] "
 
@@ -68,6 +64,13 @@ namespace
             em->convertXYZToLatLongHeight(
                 points[i].x(), points[i].y(), points[i].z(),
                 lat, lon, alt );
+
+            // deal with bug in OSG 3.4.x in which convertXYZToLatLongHeight can return
+            // NANs when converting from (0,0,0) with a spherical ellipsoid -gw 2/5/2019
+            if (osg::isNaN(lon)) lon = 0.0;
+            if (osg::isNaN(lat)) lat = 0.0;
+            if (osg::isNaN(alt)) alt = 0.0;
+
             points[i].set( osg::RadiansToDegrees(lon), osg::RadiansToDegrees(lat), alt );
         }
     }
@@ -214,13 +217,13 @@ SpatialReference::create(const Key& key)
     }
 
     // WGS84 Plate Carre:
-    else if (key.horizLower == "plate-carre")
+    else if (key.horizLower == "plate-carre" || key.horizLower == "plate-carree")
     {
+        // https://proj4.org/operations/projections/eqc.html
         srs = createFromPROJ4(
-            "+proj=longlat +ellps=WGS84 +datum=WGS84 +no_defs",
-            "WGS84" );
+           "+proj=eqc +lat_ts=0 +lat_0=0 +lon_0=0 +x_0=0 +y_0=0 +units=m +ellps=WGS84 +datum=WGS84 +no_defs",
+           "WGS84" );
 
-        srs->_is_plate_carre = true;
         srs->_is_geographic  = false;
     }
 
@@ -370,7 +373,6 @@ _is_cube        ( false ),
 _is_contiguous  ( false ),
 _is_user_defined( false ),
 _is_ltp         ( false ),
-_is_plate_carre ( false ),
 _is_spherical_mercator( false ),
 _ellipsoidId(0u)
 {
@@ -383,7 +385,6 @@ _initialized   ( false ),
 _handle        ( handle ),
 _owns_handle   ( ownsHandle ),
 _is_ltp        ( false ),
-_is_plate_carre( false ),
 _is_geocentric ( false )
 {
     //nop
@@ -891,8 +892,7 @@ getTransformFromExtents(double minX, double minY, double maxX, double maxY)
 }
 
 GeoLocator*
-SpatialReference::createLocator(double xmin, double ymin, double xmax, double ymax,
-                                bool plate_carre ) const
+SpatialReference::createLocator(double xmin, double ymin, double xmax, double ymax ) const
 {
     if ( !_initialized )
         const_cast<SpatialReference*>(this)->init();
@@ -902,7 +902,7 @@ SpatialReference::createLocator(double xmin, double ymin, double xmax, double ym
     locator->setCoordinateSystemType( isGeographic()? osgTerrain::Locator::GEOGRAPHIC : osgTerrain::Locator::PROJECTED );
     // note: not setting the format/cs on purpose.
 
-    if ( isGeographic() && !plate_carre )
+    if ( isGeographic() )
     {
         locator->setTransform( getTransformFromExtents(
             osg::DegreesToRadians( xmin ),
@@ -920,7 +920,7 @@ SpatialReference::createLocator(double xmin, double ymin, double xmax, double ym
 bool
 SpatialReference::createLocalToWorld(const osg::Vec3d& xyz, osg::Matrixd& out_local2world ) const
 {
-    if ( (isProjected() || _is_plate_carre) && !isCube() )
+    if ( isProjected() && !isCube() )
     {
         osg::Vec3d world;
         if ( !transformToWorld( xyz, world ) )
@@ -1123,6 +1123,8 @@ SpatialReference::transformXYPointArrays(double*  x,
         OE_WARN << LC << "INPUT: " << getWKT() << std::endl
             << "OUTPUT: " << out_srs->getWKT() << std::endl;
 
+        OE_WARN << LC << "ERROR:  " << CPLGetLastErrorMsg() << std::endl;
+
         return false;
     }
 
@@ -1197,11 +1199,11 @@ bool
 SpatialReference::transformToWorld(const osg::Vec3d& input,
                                    osg::Vec3d&       output ) const
 {
-    if ( (isGeographic() && !isPlateCarre()) || isCube() )
+    if ( isGeographic() || isCube() )
     {
         return transform(input, getGeocentricSRS(), output);
     }
-    else // isProjected || _is_plate_carre
+    else // isProjected
     {
         output = input;
         if ( _vdatum.valid() )
@@ -1221,7 +1223,7 @@ SpatialReference::transformFromWorld(const osg::Vec3d& world,
                                      osg::Vec3d&       output,
                                      double*           out_haeZ ) const
 {
-    if ( (isGeographic() && !isPlateCarre()) || isCube() )
+    if ( isGeographic() || isCube() )
     {
         bool ok = getGeocentricSRS()->transform(world, this, output);
         if ( ok && out_haeZ )
@@ -1233,7 +1235,7 @@ SpatialReference::transformFromWorld(const osg::Vec3d& world,
         }
         return ok;
     }
-    else // isProjected || _is_plate_carre
+    else // isProjected
     {
         output = world;
 
@@ -1375,10 +1377,10 @@ SpatialReference::transformExtentToMBR(const SpatialReference* to_srs,
 
         for (unsigned int i = 0; i < v.size(); i++)
         {
-            in_out_xmin = std::min( v[i].x(), in_out_xmin );
-            in_out_ymin = std::min( v[i].y(), in_out_ymin );
-            in_out_xmax = std::max( v[i].x(), in_out_xmax );
-            in_out_ymax = std::max( v[i].y(), in_out_ymax );
+            in_out_xmin = osg::minimum( v[i].x(), in_out_xmin );
+            in_out_ymin = osg::minimum( v[i].y(), in_out_ymin );
+            in_out_xmax = osg::maximum( v[i].x(), in_out_xmax );
+            in_out_ymax = osg::maximum( v[i].y(), in_out_ymax );
         }
 
         if ( swapXValues )
@@ -1449,7 +1451,7 @@ SpatialReference::_init()
     _is_user_defined = false; 
     _is_contiguous = true;
     _is_cube = false;
-    if ( _is_geocentric || _is_plate_carre )
+    if ( _is_geocentric )
         _is_geographic = false;
     else
         _is_geographic = OSRIsGeographic( _handle ) != 0;
@@ -1521,7 +1523,7 @@ SpatialReference::_init()
     if ( OSRExportToProj4( _handle, &proj4buf ) == OGRERR_NONE )
     {
         _proj4 = proj4buf;
-        OGRFree( proj4buf );
+        CPLFree( proj4buf );
     }
 
     // Try to extract the OGC well-known-text (WKT) string:
@@ -1529,7 +1531,7 @@ SpatialReference::_init()
     if ( OSRExportToWkt( _handle, &wktbuf ) == OGRERR_NONE )
     {
         _wkt = wktbuf;
-        OGRFree( wktbuf );
+        CPLFree( wktbuf );
     }
 
     // Build a 'normalized' initialization key.

@@ -1,6 +1,6 @@
 /* -*-c++-*- */
-/* osgEarth - Dynamic map generation toolkit for OpenSceneGraph
- * Copyright 2016 Pelican Mapping
+/* osgEarth - Geospatial SDK for OpenSceneGraph
+ * Copyright 2018 Pelican Mapping
  * http://osgearth.org
  *
  * osgEarth is free software; you can redistribute it and/or modify
@@ -18,19 +18,12 @@
  */
 
 #include <osgEarth/ImageUtils>
-#include <osgEarth/ThreadingUtils>
 #include <osgEarth/Registry>
 #include <osgEarth/Capabilities>
 #include <osgEarth/Random>
-#include <osgEarth/GeoCommon>
-#include <osg/Notify>
-#include <osg/Texture>
-#include <osg/ImageSequence>
-#include <osg/Timer>
-#include <osg/ValueObject>
 #include <osgDB/Registry>
-#include <string.h>
-#include <memory.h>
+
+#include <osg/ValueObject>
 
 #define LC "[ImageUtils] "
 
@@ -321,11 +314,11 @@ ImageUtils::resizeImage(const osg::Image* input,
                         // nearest neighbor:
                         int col = (input_col-(int)input_col) <= (ceil(input_col)-input_col) ?
                             (int)input_col :
-                            std::min( 1+(int)input_col, (int)in_s-1 );
+                            osg::minimum( 1+(int)input_col, (int)in_s-1 );
 
                         int row = (input_row-(int)input_row) <= (ceil(input_row)-input_row) ?
                             (int)input_row :
-                            std::min( 1+(int)input_row, (int)in_t-1 );
+                            osg::minimum( 1+(int)input_row, (int)in_t-1 );
 
                         color = read(col, row, layer); // read pixel from mip level 0.
 
@@ -426,8 +419,8 @@ ImageUtils::bicubicUpsample(const osg::Image* source,
         for (int t = 0; t < target->t(); )
         {
             int offset = (s-1) % stride; // the minus1 accounts for the border
-            int s0 = std::max(s - offset, 0);
-            int s1 = std::min(s0 + (int)stride, target->s()-1);
+            int s0 = osg::maximum(s - offset, 0);
+            int s1 = osg::minimum(s0 + (int)stride, target->s()-1);
             double mu = (double)offset / (double)(s1-s0);
             osg::Vec4 p1 = readTarget(s0, t);
             osg::Vec4 p2 = readTarget(s1, t);
@@ -445,8 +438,8 @@ ImageUtils::bicubicUpsample(const osg::Image* source,
         for (int t = 2; t<target->t()-2; t += 2)
         {
             int offset = (t-1) % stride; // the minus1 accounts for the border
-            int t0 = std::max(t - offset, 0);
-            int t1 = std::min(t0 + (int)stride, target->t()-1);
+            int t0 = osg::maximum(t - offset, 0);
+            int t1 = osg::minimum(t0 + (int)stride, target->t()-1);
             double mu = (double)offset / double(t1-t0);
 
             osg::Vec4 p1 = readTarget(s, t0);
@@ -465,12 +458,12 @@ ImageUtils::bicubicUpsample(const osg::Image* source,
         for (int t = 2; t<target->t()-2; t += 2)
         {
             int s_offset = (s-1) % stride;
-            int s0 = std::max(s - s_offset, 0);
-            int s1 = std::min(s0 + (int)stride, target->s()-1);
+            int s0 = osg::maximum(s - s_offset, 0);
+            int s1 = osg::minimum(s0 + (int)stride, target->s()-1);
 
             int t_offset = (t-1) % stride;
-            int t0 = std::max(t - t_offset, 0);
-            int t1 = std::min(t0 + (int)stride, target->t()-1);
+            int t0 = osg::maximum(t - t_offset, 0);
+            int t1 = osg::minimum(t0 + (int)stride, target->t()-1);
 
             double mu, mu2;
 
@@ -491,90 +484,6 @@ ImageUtils::bicubicUpsample(const osg::Image* source,
             writeTarget(v, s, t);
         }
     }
-
-
-#if 0
-    // first copy and expand the source quadrant by copying every
-    // even-numbered pixel.
-    for (int s=0; s<=source->s()/2; ++s)
-    {
-        for (int t=0; t<=source->t()/2; ++t)
-        {
-            osg::Vec4 value = readSource(s_off+s, t_off+t);
-            unsigned out_s = s*2, out_t = t*2;
-            writeTarget(value, s*2, t*2);
-        }
-    }
-
-    // next interpolate the odd numbered columns, based on the stride.
-    for (int s = 1; s<target->s()-1; s += 2)
-    {
-        for (int t = 0; t < target->t(); t += 2)
-        {
-            int offset = s % stride;
-            int s0 = std::max(s - offset, 0);
-            int s1 = std::min(s0 + (int)stride, target->s()-1);
-            float mu = (float)offset / (float)(s1-s0);
-
-            osg::Vec4 p1 = readTarget(s0, t);
-            osg::Vec4 p2 = readTarget(s1, t);
-            float mu2 = (1.0 - cosf(mu*osg::PI))*0.5;
-            osg::Vec4 v = (p1*(1.0-mu2)) + (p2*mu2);
-            writeTarget(v, s, t);
-        }
-    }
-
-    // next interpolate the odd numbered rows
-    for (int s = 0; s < target->s(); s += 2)
-    {
-        for (int t = 1; t<target->t()-1; t += 2)
-        {
-            int offset = t % stride;
-            int t0 = std::max(t - offset, 0);
-            int t1 = std::min(t0 + (int)stride, target->t()-1);
-            float mu = (float)offset / float(t1-t0);
-
-            osg::Vec4 p1 = readTarget(s, t0);
-            osg::Vec4 p2 = readTarget(s, t1);
-            float mu2 = (1.0 - cosf(mu*osg::PI))*0.5;
-            osg::Vec4 v = (p1*(1.0-mu2)) + (p2*mu2);
-            writeTarget(v, s, t);
-        }
-    }
-
-    // then interpolate the centers
-    for (int s = 1; s<target->s()-1; s += 2)
-    {
-        for (int t = 1; t<target->t()-1; t += 2)
-        {
-            int s_offset = s % stride;
-            int s0 = std::max(s - s_offset, 0);
-            int s1 = std::min(s0 + (int)stride, target->s()-1);
-
-            int t_offset = t % stride;
-            int t0 = std::max(t - t_offset, 0);
-            int t1 = std::min(t0 + (int)stride, target->t()-1);
-
-            float mu, mu2;
-
-            osg::Vec4 p1 = readTarget(s0, t);
-            osg::Vec4 p2 = readTarget(s1, t);
-            mu = (float)s_offset / (float)(s1-s0);
-            mu2 = (1.0 - cosf(mu*osg::PI))*0.5;
-            osg::Vec4 v1 = (p1*(1.0-mu2)) + (p2*mu2);
-            
-            osg::Vec4 p3 = readTarget(s, t0);
-            osg::Vec4 p4 = readTarget(s, t1);
-            mu = (float)t_offset / (float)(t1-t0);
-            mu2 = (1.0 - cosf(mu*osg::PI))*0.5;
-            osg::Vec4 v2 = (p3*(1.0-mu2)) + (p4*mu2);
-
-            osg::Vec4 v = (v1+v2)*0.5;
-
-            writeTarget(v, s, t);
-        }
-    }
-#endif
     
     return true;
 }
@@ -1126,7 +1035,7 @@ ImageUtils::computeTextureCompressionMode(const osg::Image*                 imag
 
     const Capabilities& caps = Registry::capabilities();
 
-#if defined(OSG_GLES2_AVAILABLE) && defined(OSG_GLES3_AVAILABLE)
+#if !defined(OSG_GLES2_AVAILABLE) && !defined(OSG_GLES3_AVAILABLE)
 
     if (image->getPixelFormat() == GL_RGBA && image->getPixelSizeInBits() == 32) 
     {
@@ -1980,6 +1889,8 @@ namespace
             return &ColorReader<GL_UNSIGNED_SHORT_5_5_5_1, GLushort>::read;
         case GL_UNSIGNED_BYTE_3_3_2:
             return &ColorReader<GL_UNSIGNED_BYTE_3_3_2, GLubyte>::read;
+        case GL_UNSIGNED_INT_8_8_8_8_REV:
+            return &ColorReader<GLFormat, GLubyte>::read;
         default:
             return &ColorReader<0, GLbyte>::read;
         }
@@ -2071,12 +1982,12 @@ ImageUtils::PixelReader::operator()(double u, double v, int r, int m) const
          double s = u * sizeS;
          double t = v * sizeT;
 
-         double s0 = std::max(floorf(s), 0.0f);
-         double s1 = std::min(s0+1.0f, sizeS);
+         double s0 = osg::maximum(floorf(s), 0.0f);
+         double s1 = osg::minimum(s0+1.0f, sizeS);
          double smix = s0 < s1 ? (s-s0)/(s1-s0) : 0.0f;
 
-         double t0 = std::max(floorf(t), 0.0f);
-         double t1 = std::min(t0+1.0f, sizeT);
+         double t0 = osg::maximum(floorf(t), 0.0f);
+         double t1 = osg::minimum(t0+1.0f, sizeT);
          double tmix = t0 < t1 ? (t-t0)/(t1-t0) : 0.0f;
 
          osg::Vec4 UL = (*_reader)(this, (int)s0, (int)t0, r, m); // upper left
@@ -2226,30 +2137,6 @@ TextureAndImageVisitor::apply(osg::Node& node)
         apply(*node.getStateSet());
 
     traverse(node);
-}
-
-void
-TextureAndImageVisitor::apply(osg::Geode& geode)
-{
-    if (geode.getStateSet())
-        apply(*geode.getStateSet());
-
-    for (unsigned i = 0; i < geode.getNumDrawables(); ++i) {
-        apply(*geode.getDrawable(i));
-        //if (geode.getDrawable(i) && geode.getDrawable(i)->getStateSet())
-        //    apply(*geode.getDrawable(i)->getStateSet());
-    }
-
-    //traverse(geode);
-}
-
-void
-TextureAndImageVisitor::apply(osg::Drawable& drawable)
-{
-    if (drawable.getStateSet())
-        apply(*drawable.getStateSet());
-
-    //traverse(drawable);
 }
 
 void

@@ -1,6 +1,6 @@
 /* -*-c++-*- */
-/* osgEarth - Dynamic map generation toolkit for OpenSceneGraph
- * Copyright 2016 Pelican Mapping
+/* osgEarth - Geospatial SDK for OpenSceneGraph
+ * Copyright 2018 Pelican Mapping
  * http://osgearth.org
  *
  * osgEarth is free software; you can redistribute it and/or modify
@@ -44,17 +44,17 @@ BillboardSymbol::getConfig() const
 {
     Config conf = InstanceSymbol::getConfig();
     conf.key() = "billboard";
-    conf.addIfSet( "width", _width );
-    conf.addIfSet( "height", _height );
-    conf.addNonSerializable( "BillboardSymbol::image", _image.get() );
+    conf.set( "width", _width );
+    conf.set( "height", _height );
+    conf.setNonSerializable( "BillboardSymbol::image", _image.get() );
     return conf;
 }
 
 void 
 BillboardSymbol::mergeConfig( const Config& conf )
 {
-    conf.getIfSet( "width", _width );
-    conf.getIfSet( "height", _height );
+    conf.get( "width", _width );
+    conf.get( "height", _height );
     _image = conf.getNonSerializable<osg::Image>( "BillboardSymbol::image" );
 }
 

@@ -1,6 +1,6 @@
 /* -*-c++-*- */
-/* osgEarth - Dynamic map generation toolkit for OpenSceneGraph
- * Copyright 2016 Pelican Mapping
+/* osgEarth - Geospatial SDK for OpenSceneGraph
+ * Copyright 2018 Pelican Mapping
  * http://osgearth.org
  *
  * osgEarth is free software; you can redistribute it and/or modify
@@ -17,12 +17,10 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>
  */
 #include <osgEarth/LandCoverLayer>
-#include <osgEarth/ImageUtils>
 #include <osgEarth/Registry>
 #include <osgEarth/Map>
 #include <osgEarth/MetaTile>
 #include <osgEarth/SimplexNoise>
-#include <osgEarth/ThreadingUtils>
 #include <osgEarth/Progress>
 
 using namespace osgEarth;
@@ -100,7 +98,7 @@ namespace
         {
             if (sourceLayer->getEnabled() && 
                 sourceLayer->isKeyInLegalRange(key) &&
-                sourceLayer->mayHaveDataInExtent(key.getExtent()))
+                sourceLayer->mayHaveData(key))
             {
                 for(TileKey k = key; k.valid() && !image.valid(); k = k.createParentKey())
                 {
@@ -239,7 +237,9 @@ namespace
             if (coverageOptions.enabled() == false)
                 continue;
 
-            coverageOptions.cachePolicy() = CachePolicy::NO_CACHE; // TODO: yes? no?
+            // We never want to cache data from a coverage, because the "parent" layer
+            // will be caching the entire result of a multi-coverage composite.
+            coverageOptions.cachePolicy() = CachePolicy::NO_CACHE;
 
             // Create the coverage layer:
             LandCoverCoverageLayer* layer = new LandCoverCoverageLayer( coverageOptions );
@@ -263,7 +263,21 @@ namespace
             const DataExtentList& de = layer->getDataExtents();
             for(DataExtentList::const_iterator dei = de.begin(); dei != de.end(); ++dei)
             {
-                getDataExtents().push_back(*dei);
+                if (!profile || dei->getSRS()->isHorizEquivalentTo(profile->getSRS()))
+                {
+                    getDataExtents().push_back(*dei);
+                }
+                else
+                {
+                    // Transform the data extents to the layer profile
+                    GeoExtent ep = dei->transform(profile->getSRS());
+                    DataExtent de(ep);
+                    if (dei->minLevel().isSet())
+                        de.minLevel() = profile->getEquivalentLOD(layer->getProfile(), dei->minLevel().get());
+                    if (dei->maxLevel().isSet())
+                        de.maxLevel() = profile->getEquivalentLOD(layer->getProfile(), dei->maxLevel().get());
+                    getDataExtents().push_back(de);
+                }
             }
         }
 
@@ -297,7 +311,7 @@ namespace
         ImageUtils::markAsUnNormalized(out.get(), true);
 
         // Allocate a suitable format:
-        GLint internalFormat = GL_LUMINANCE32F_ARB;
+        GLint internalFormat = GL_R16F;
 
         int tilesize = getPixelsPerTile();
 
@@ -311,11 +325,7 @@ namespace
         float du = 1.0f / (float)(out->s()-1);
         float dv = 1.0f / (float)(out->t()-1);
 
-        osg::Vec4 nodata;
-        if (internalFormat == GL_LUMINANCE16F_ARB)
-            nodata.set(-32768, -32768, -32768, -32768);
-        else
-            nodata.set(NO_DATA_VALUE, NO_DATA_VALUE, NO_DATA_VALUE, NO_DATA_VALUE);
+        osg::Vec4 nodata(NO_DATA_VALUE, NO_DATA_VALUE, NO_DATA_VALUE, NO_DATA_VALUE);
 
         unsigned pixelsWritten = 0u;
 
@@ -327,7 +337,10 @@ namespace
                 for(int L = layers.size()-1; L >= 0 && !wrotePixel; --L)
                 {
                     if (progress && progress->isCanceled())
+                    {
+                        OE_DEBUG << LC << key.str() << " canceled" << std::endl;
                         return 0L;
+                    }
 
                     ILayer& layer = layers[L];
                     if ( !layer.valid )
@@ -412,8 +425,8 @@ _warp(0.0f)
 void
 LandCoverLayerOptions::fromConfig(const Config& conf)
 {
-    conf.getIfSet("warp", _warp);
-    conf.getIfSet("noise_lod", _noiseLOD);
+    conf.get("warp", _warp);
+    conf.get("noise_lod", _noiseLOD);
 
     ConfigSet layerConfs = conf.child("coverages").children("coverage");
     for (ConfigSet::const_iterator i = layerConfs.begin(); i != layerConfs.end(); ++i)
@@ -426,10 +439,9 @@ Config
 LandCoverLayerOptions::getConfig() const
 {
     Config conf = ImageLayerOptions::getConfig();
-    conf.key() = "land_cover";
 
-    conf.addIfSet("warp", _warp);
-    conf.addIfSet("noise_lod", _noiseLOD);
+    conf.set("warp", _warp);
+    conf.set("noise_lod", _noiseLOD);
 
     if (_coverages.size() > 0)
     {
@@ -440,7 +452,7 @@ LandCoverLayerOptions::getConfig() const
         {
             images.add("coverage", i->getConfig());
         }
-        conf.update(images);
+        conf.set(images);
     }
 
     return conf;
@@ -512,9 +524,6 @@ LandCoverLayer::createImageImplementation(const TileKey& key, ProgressCallback* 
         {
             for (int y = -1; y <= 1; ++y)
             {
-                if (progress && progress->isCanceled())
-                    return GeoImage::INVALID;
-
                 // compute the neighoring key:
                 TileKey subkey = key.createNeighborKey(x, y);
                 if (subkey.valid())
@@ -532,6 +541,12 @@ LandCoverLayer::createImageImplementation(const TileKey& key, ProgressCallback* 
                             metaImage.setImage(x, y, tile.getImage(), scaleBias);
                         }
                     }
+                }
+
+                if (progress && progress->isCanceled())
+                {
+                    OE_DEBUG << LC << key.str() << " canceled" << std::endl;
+                    return GeoImage::INVALID;
                 }
             }
         }
@@ -576,9 +591,6 @@ LandCoverLayer::createImageImplementation(const TileKey& key, ProgressCallback* 
             for (int s = 0; s < image->s(); ++s)
             {
                 double u = (double)s / (double)(image->s() - 1);
-                
-                if (progress && progress->isCanceled())
-                    return GeoImage::INVALID;
 
                 cov.set(u, v);
 
@@ -605,6 +617,12 @@ LandCoverLayer::createImageImplementation(const TileKey& key, ProgressCallback* 
                 else
                 {
                     write(nodata, s, t);
+                }
+                
+                if (progress && progress->isCanceled())
+                {
+                    OE_DEBUG << LC << key.str() << " canceled" << std::endl;
+                    return GeoImage::INVALID;
                 }
             }
         }

@@ -1,6 +1,6 @@
 /* -*-c++-*- */
-/* osgEarth - Dynamic map generation toolkit for OpenSceneGraph
-* Copyright 2016 Pelican Mapping
+/* osgEarth - Geospatial SDK for OpenSceneGraph
+* Copyright 2018 Pelican Mapping
 * http://osgearth.org
 *
 * osgEarth is free software; you can redistribute it and/or modify
@@ -20,19 +20,13 @@
 * along with this program.  If not, see <http://www.gnu.org/licenses/>
 */
 #include <osgEarth/DrapingTechnique>
-#include <osgEarth/DrapingCullSet>
 #include <osgEarth/Capabilities>
 #include <osgEarth/Registry>
-#include <osgEarth/ShaderFactory>
-#include <osgEarth/VirtualProgram>
 #include <osgEarth/Shaders>
-#include <osgEarth/CullingUtils>
 #include <osgEarth/Lighting>
 
 #include <osg/BlendFunc>
-#include <osg/TexGen>
 #include <osg/Texture2D>
-#include <osg/Uniform>
 
 #define LC "[DrapingTechnique] "
 
@@ -82,9 +76,23 @@ namespace
 
 
     // Additional per-view data stored by the draping technique.
-    struct LocalPerViewData : public osg::Referenced
+    struct LocalPerViewData : public osg::Object
     {
+        META_Object(osgEarth, LocalPerViewData);
+
         osg::ref_ptr<osg::Uniform> _texGenUniform;
+
+        void resizeGLObjectBuffers(unsigned maxSize) {
+            if (_texGenUniform.valid())
+                _texGenUniform->resizeGLObjectBuffers(maxSize);
+        }
+        void releaseGLObjects(osg::State* state) const {
+            if (_texGenUniform.valid())
+                _texGenUniform->releaseGLObjects(state);
+        }
+
+        LocalPerViewData() { }
+        LocalPerViewData(const LocalPerViewData& rhs, const osg::CopyOp& co) { }
     };
 }
 
@@ -244,7 +252,7 @@ namespace
                     //break;
                 }
 
-                halfWidthNear = std::max(halfWidthNear, minHalfWidthNear);
+                halfWidthNear = osg::maximum(halfWidthNear, minHalfWidthNear);
             }
 
             // if the far plane is narrower than the near plane, bail out and 
@@ -385,7 +393,7 @@ DrapingTechnique::setUpCamera(OverlayDecorator::TechRTTParams& params)
     osg::Texture2D* projTexture = new DrapingTexture(); 
 
     projTexture->setTextureSize( *_textureSize, *_textureSize );
-    projTexture->setInternalFormat( GL_RGBA );
+    projTexture->setInternalFormat( GL_RGBA8 );  //use GL_RGBA8 for compatibility with osg's glTexStorage extension
     projTexture->setSourceFormat( GL_RGBA );
     projTexture->setSourceType( GL_UNSIGNED_BYTE );
     projTexture->setFilter( osg::Texture::MIN_FILTER, _mipmapping? osg::Texture::LINEAR_MIPMAP_LINEAR: osg::Texture::LINEAR );
@@ -506,12 +514,13 @@ DrapingTechnique::setUpCamera(OverlayDecorator::TechRTTParams& params)
             "    if (vclip.z > 1.0) vclip.z = vclip.w+1.0; \n"
             "} \n";
         VirtualProgram* rtt_vp = VirtualProgram::getOrCreate(rttStateSet);
+        rtt_vp->setName("Draping RTT");
         rtt_vp->setFunction( "oe_overlay_warpClip", warpClip, ShaderComp::LOCATION_VERTEX_CLIP );
     }
 
     // Assemble the terrain shaders that will apply projective texturing.
     VirtualProgram* terrain_vp = VirtualProgram::getOrCreate(params._terrainStateSet);
-    terrain_vp->setName( "Draping terrain shaders");
+    terrain_vp->setName( "Draping apply");
 
     // sampler for projected texture:
     params._terrainStateSet->getOrCreateUniform(

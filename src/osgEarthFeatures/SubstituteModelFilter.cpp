@@ -1,6 +1,6 @@
 /* -*-c++-*- */
-/* osgEarth - Dynamic map generation toolkit for OpenSceneGraph
- * Copyright 2016 Pelican Mapping
+/* osgEarth - Geospatial SDK for OpenSceneGraph
+ * Copyright 2018 Pelican Mapping
  * http://osgearth.org
  *
  * osgEarth is free software; you can redistribute it and/or modify
@@ -21,7 +21,6 @@
 #include <osgEarthFeatures/FilterContext>
 #include <osgEarthFeatures/GeometryUtils>
 
-#include <osgEarthSymbology/MeshConsolidator>
 #include <osgEarthSymbology/MeshFlattener>
 #include <osgEarthSymbology/StyleSheet>
 
@@ -41,6 +40,10 @@
 #include <osg/Billboard>
 
 #define LC "[SubstituteModelFilter] "
+
+#ifndef GL_CLIP_DISTANCE0
+#define GL_CLIP_DISTANCE0 0x3000
+#endif
 
 using namespace osgEarth;
 using namespace osgEarth::Features;
@@ -68,7 +71,7 @@ namespace
 SubstituteModelFilter::SubstituteModelFilter( const Style& style ) :
 _style                ( style ),
 _cluster              ( false ),
-_useDrawInstanced     ( false ),
+_useDrawInstanced     ( true ),
 _merge                ( true ),
 _normalScalingRequired( false ),
 _instanceCache        ( false )     // cache per object so MT not required
@@ -296,7 +299,7 @@ SubstituteModelFilter::process(const FeatureList&           features,
 
                     scaleMatrix = osg::Matrix::scale( scaleVec );
 
-                    if ( modelSymbol->heading().isSet() )
+                    if ( modelSymbol && modelSymbol->heading().isSet() )
                     {
                         float heading = input->eval(headingEx, &context);
                         rotationMatrix.makeRotate( osg::Quat(osg::DegreesToRadians(heading), osg::Vec3(0,0,1)) );
@@ -310,11 +313,11 @@ SubstituteModelFilter::process(const FeatureList&           features,
                         // but if the tile is big enough the up vectors won't be quite right.
                         osg::Matrixd rotation;
                         ECEF::transformAndGetRotationMatrix( point, context.profile()->getSRS(), point, targetSRS, rotation );
-                        mat = rotationMatrix * scaleMatrix * rotation * osg::Matrixd::translate( point ) * _world2local;
+                        mat = scaleMatrix * rotationMatrix * rotation * osg::Matrixd::translate( point ) * _world2local;
                     }
                     else
                     {
-                        mat = rotationMatrix * scaleMatrix *  osg::Matrixd::translate( point ) * _world2local;
+                        mat = scaleMatrix * rotationMatrix * osg::Matrixd::translate( point ) * _world2local;
                     }
 
                     osg::MatrixTransform* xform = new osg::MatrixTransform();
@@ -352,8 +355,11 @@ SubstituteModelFilter::process(const FeatureList&           features,
         // activate horizon culling if we are in geocentric space
         if ( context.getSession() && context.getSession()->getMapInfo().isGeocentric() )
         {
-            //TODO: re-evaluate this; use Horizon?
-            HorizonCullingProgram::install( attachPoint->getOrCreateStateSet() );
+            // should this use clipping, or a horizon cull callback?
+
+            //HorizonCullingProgram::install( attachPoint->getOrCreateStateSet() );
+
+            attachPoint->getOrCreateStateSet()->setMode(GL_CLIP_DISTANCE0, 1);
         }
     }
 
@@ -491,24 +497,6 @@ SubstituteModelFilter::push(FeatureList& features, FilterContext& context)
 
     // return proper context
     context = newContext;
-
-#if 0
-    // TODO: OBE due to shader pipeline
-    // see if we need normalized normals
-    if ( _normalScalingRequired )
-    {
-        // TODO: carefully test for this, since GL_NORMALIZE hurts performance in 
-        // FFP mode (RESCALE_NORMAL is faster for uniform scaling); and I think auto-normal-scaling
-        // is disabled entirely when using shaders. For now I believe we are dropping to FFP
-        // when not using instancing ...so just check for that
-        if ( !_useDrawInstanced )
-        {
-            group->getOrCreateStateSet()->setMode( GL_NORMALIZE, osg::StateAttribute::ON );
-        }
-    }
-#endif
-
-    //osgDB::writeNodeFile(*group, "c:/temp/clustered.osg");
 
     return group;
 }

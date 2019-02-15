@@ -1,5 +1,5 @@
 /* -*-c++-*- */
-/* osgEarth - Dynamic map generation toolkit for OpenSceneGraph
+/* osgEarth - Geospatial SDK for OpenSceneGraph
 * Copyright 2008-2012 Pelican Mapping
 * http://osgearth.org
 *
@@ -27,12 +27,12 @@
 
 namespace osgEarth { namespace Features
 {
-    class OSGEARTHFEATURES_EXPORT GPULineShaders : public ShaderPackage
+    class OSGEARTHFEATURES_EXPORT Shaders : public ShaderPackage
 	{
     public:
-        GPULineShaders();
-
-        std::string GPULinesScreenProj;
+        Shaders();
+        
+        // add here
 	};	
 
 } } // namespace osgEarth::Features

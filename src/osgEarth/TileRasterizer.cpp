@@ -1,6 +1,6 @@
 /* -*-c++-*- */
-/* osgEarth - Dynamic map generation toolkit for OpenSceneGraph
- * Copyright 2016 Pelican Mapping
+/* osgEarth - Geospatial SDK for OpenSceneGraph
+ * Copyright 2018 Pelican Mapping
  * http://osgearth.org
  *
  * osgEarth is free software; you can redistribute it and/or modify
@@ -19,10 +19,7 @@
 #include <osgEarth/TileRasterizer>
 #include <osgEarth/NodeUtils>
 #include <osgEarth/VirtualProgram>
-#include <osgEarth/Registry>
-#include <osg/MatrixTransform>
-#include <osg/FrameBufferObject>
-#include <osgDB/ReadFile>
+#include <osgEarth/GLUtils>
 
 #define LC "[TileRasterizer] "
 
@@ -67,7 +64,7 @@ TileRasterizer::TileRasterizer() :
 osg::Camera()
 {
     // active an update traversal.
-    setNumChildrenRequiringUpdateTraversal(1);
+    ADJUST_EVENT_TRAV_COUNT(this, +1);
     setCullingActive(false);
 
     // set up the RTT camera.
@@ -82,11 +79,10 @@ osg::Camera()
     setViewMatrix(osg::Matrix::identity());
 
     osg::StateSet* ss = getOrCreateStateSet();
-    //ss->setAttribute(new osg::Program(), osg::StateAttribute::OFF | osg::StateAttribute::OVERRIDE);
 
     ss->setMode(GL_BLEND, 1);
-    ss->setMode(GL_LIGHTING, 0);
     ss->setMode(GL_CULL_FACE, 0);
+    GLUtils::setLighting(ss, 0);
     
     this->setPreDrawCallback(new PreDrawRouter<TileRasterizer>(this));
     this->setPostDrawCallback(new PostDrawRouter<TileRasterizer>(this));
@@ -109,6 +105,7 @@ osg::Camera()
     setReadBuffer(GL_FRONT);
 
     VirtualProgram* vp = VirtualProgram::getOrCreate(ss);
+    vp->setName("TileRasterizer");
     vp->setInheritShaders(false);
 
     // Someday we might need this to undistort rasterizer cells. We'll see
@@ -180,9 +177,23 @@ TileRasterizer::push(osg::Node* node, unsigned size, const GeoExtent& extent)
 }
 
 void
+TileRasterizer::accept(osg::NodeVisitor& nv)
+{
+    if (nv.getVisitorType() == nv.CULL_VISITOR && getBufferAttachmentMap().empty())
+    {
+        return;
+    }
+    else
+    {
+        osg::Camera::accept(nv);
+    }
+}
+
+
+void
 TileRasterizer::traverse(osg::NodeVisitor& nv)
 {
-    if (nv.getVisitorType() == nv.UPDATE_VISITOR)
+    if (nv.getVisitorType() == nv.EVENT_VISITOR)
     {
         Threading::ScopedMutexLock lock(_mutex);
 
@@ -245,7 +256,10 @@ TileRasterizer::traverse(osg::NodeVisitor& nv)
     //if (!getBufferAttachmentMap().empty())
     else if (nv.getVisitorType() == nv.CULL_VISITOR)
     {
-        osg::Camera::traverse(nv);
+        if (!getBufferAttachmentMap().empty())
+        {
+            osg::Camera::traverse(nv);
+        }
     }
 }
 

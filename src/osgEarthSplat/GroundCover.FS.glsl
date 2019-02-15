@@ -1,15 +1,15 @@
-#version 330
+#version $GLSL_VERSION_STR
 #pragma vp_name       Land cover billboard texture application
 #pragma vp_entryPoint oe_GroundCover_fragment
 #pragma vp_location   fragment_coloring
 
-#pragma import_defines(OE_GROUNDCOVER_HAS_MULTISAMPLES, OE_GROUNDCOVER_SHOW_TESSELLATION)
+#pragma import_defines(OE_GROUNDCOVER_HAS_MULTISAMPLES)
+#pragma import_defines(OE_GROUNDCOVER_SHOW_TESSELLATION)
 
 
 uniform sampler2DArray oe_GroundCover_billboardTex;
 uniform float oe_GroundCover_exposure;
 in vec2 oe_GroundCover_texCoord;
-in vec4 oe_layer_tilec;
 
 flat in float oe_GroundCover_arrayIndex; // from GroundCover.GS.glsl
 

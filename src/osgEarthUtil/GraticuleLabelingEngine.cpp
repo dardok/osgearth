@@ -1,6 +1,6 @@
 /* -*-c++-*- */
-/* osgEarth - Dynamic map generation toolkit for OpenSceneGraph
-* Copyright 2016 Pelican Mapping
+/* osgEarth - Geospatial SDK for OpenSceneGraph
+* Copyright 2018 Pelican Mapping
 * http://osgearth.org
 *
 * osgEarth is free software; you can redistribute it and/or modify
@@ -20,11 +20,7 @@
 * along with this program.  If not, see <http://www.gnu.org/licenses/>
 */
 #include "GraticuleLabelingEngine"
-#include <osgEarth/GeoData>
 #include <osgEarth/EllipsoidIntersector>
-#include <osgEarth/TerrainEngineNode>
-#include <osg/CoordinateSystemNode>
-#include <osgEarthUtil/ClipSpace>
 
 #define LC "[GraticuleLabelingEngine] "
 
@@ -89,6 +85,40 @@ bool GraticuleLabelingEngine::getVisible(osg::Camera* camera)
 {
     CameraData& data = _cameraDataMap.get(camera);
     return data.visible;
+}
+
+void
+GraticuleLabelingEngine::UpdateLabelStyles::operator()(GraticuleLabelingEngine::CameraData& data)
+{
+    for(GraticuleLabelingEngine::LabelNodeVector::iterator i = data.xLabels.begin();
+        i != data.xLabels.end();
+        ++i)
+    {
+        i->get()->setStyle(*_xStyle);
+    }
+
+    for(GraticuleLabelingEngine::LabelNodeVector::iterator i = data.yLabels.begin();
+        i != data.yLabels.end();
+        ++i)
+    {
+        i->get()->setStyle(*_yStyle);
+    }
+}
+
+void
+GraticuleLabelingEngine::setStyle(const Style& style)
+{
+    setStyles(style, style);
+}
+
+void
+GraticuleLabelingEngine::setStyles(const Style& xStyle, const Style& yStyle)
+{
+    _xLabelStyle = xStyle;
+    _yLabelStyle = yStyle;
+
+    UpdateLabelStyles update(_xLabelStyle, _yLabelStyle);
+    _cameraDataMap.forEach(update);
 }
 
 void
@@ -172,7 +202,7 @@ GraticuleLabelingEngine::cullTraverse(osgUtil::CullVisitor& nv, CameraData& data
     }
 
     // Intersect the corners of the view frustum with the ellipsoid.
-    // This will yeild the approximate geo-extent of the view.
+    // This will yield the approximate geo-extent of the view.
     // TODO: graduate this to the core if generally useful - could be helpful
     // for displaying the extent of the current view.
 

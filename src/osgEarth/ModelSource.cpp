@@ -1,6 +1,6 @@
 /* -*-c++-*- */
-/* osgEarth - Dynamic map generation toolkit for OpenSceneGraph
- * Copyright 2016 Pelican Mapping
+/* osgEarth - Geospatial SDK for OpenSceneGraph
+ * Copyright 2018 Pelican Mapping
  * http://osgearth.org
  *
  * osgEarth is free software; you can redistribute it and/or modify
@@ -18,9 +18,7 @@
  */
 #include <osgEarth/ModelSource>
 #include <osgEarth/Registry>
-#include <osg/Notify>
 #include <osgDB/ReadFile>
-#include <OpenThreads/ScopedLock>
 
 using namespace osgEarth;
 using namespace OpenThreads;
@@ -47,11 +45,11 @@ ModelSourceOptions::~ModelSourceOptions()
 void
 ModelSourceOptions::fromConfig( const Config& conf )
 {
-    conf.getIfSet<float>( "min_range", _minRange );
-    conf.getIfSet<float>( "max_range", _maxRange );
-    conf.getIfSet<int>( "render_order", _renderOrder );
-    conf.getIfSet("render_bin", _renderBin );
-    conf.getIfSet<bool>( "depth_test_enabled", _depthTestEnabled );
+    conf.get<float>( "min_range", _minRange );
+    conf.get<float>( "max_range", _maxRange );
+    conf.get<int>( "render_order", _renderOrder );
+    conf.get("render_bin", _renderBin );
+    conf.get<bool>( "depth_test_enabled", _depthTestEnabled );
 }
 
 void
@@ -78,7 +76,7 @@ ModelSourceOptions::getConfig() const
 ModelSource::ModelSource( const ModelSourceOptions& options ) :
 _options( options )
 {
-    _sgCallbacks = new SceneGraphCallbacks();
+    //nop
 }
 
 ModelSource::~ModelSource()
@@ -103,11 +101,14 @@ ModelSource::createNode(const Map*        map,
     }
 
     osg::Node* node = createNodeImplementation(map, progress);
-    if ( node )
+
+    //TODO: consider moving this logic up into MapNode.
+    if ( node && getSceneGraphCallbacks() )
     {
         getSceneGraphCallbacks()->firePreMergeNode(node);
         getSceneGraphCallbacks()->firePostMergeNode(node);
     }
+
     return node;
 }
 
