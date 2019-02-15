@@ -198,6 +198,7 @@ _isCoreProfile          ( true )
 #endif
 }
 
+void
 Capabilities::initialize(osg::GraphicsContext *gc)
 {
     // check the environment in order to disable ATI workarounds
