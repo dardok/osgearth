@@ -111,6 +111,45 @@ struct MyGraphicsContext
 
 #define SAYBOOL(X) (X?"yes":"no")
 
+Capabilities::Capabilities(osg::GraphicsContext *gc) :
+_maxFFPTextureUnits     ( 1 ),
+_maxGPUTextureUnits     ( 1 ),
+_maxGPUTextureCoordSets ( 1 ),
+_maxGPUAttribs          ( 1 ),
+_maxTextureSize         ( 256 ),
+_maxFastTextureSize     ( 256 ),
+_maxLights              ( 1 ),
+_depthBits              ( 0 ),
+_supportsGLSL           ( false ),
+_GLSLversion            ( 1.0f ),
+_supportsTextureArrays  ( false ),
+_supportsMultiTexture   ( false ),
+_supportsStencilWrap    ( true ),
+_supportsTwoSidedStencil( false ),
+_supportsTexture3D      ( false ),
+_supportsTexture2DLod   ( false ),
+_supportsMipmappedTextureUpdates( false ),
+_supportsDepthPackedStencilBuffer( false ),
+_supportsOcclusionQuery ( false ),
+_supportsDrawInstanced  ( false ),
+_supportsUniformBufferObjects( false ),
+_supportsNonPowerOfTwoTextures( false ),
+_maxUniformBlockSize    ( 0 ),
+_preferDLforStaticGeom  ( true ),
+_numProcessors          ( 1 ),
+_supportsFragDepthWrite ( false ),
+_supportsS3TC           ( false ),
+_supportsPVRTC          ( false ),
+_supportsARBTC          ( false ),
+_supportsETC            ( false ),
+_supportsRGTC           ( false ),
+_supportsTextureBuffer  ( false ),
+_maxTextureBufferSize   ( 0 ),
+_isCoreProfile          ( true )
+{
+    initialize(gc);
+}
+
 Capabilities::Capabilities() :
 _maxFFPTextureUnits     ( 1 ),
 _maxGPUTextureUnits     ( 1 ),
@@ -150,6 +189,17 @@ _isCoreProfile          ( true )
     // little hack to force the osgViewer library to link so we can create a graphics context
     osgViewerGetVersion();
 
+    // create a graphics context so we can query OpenGL support:
+    osg::GraphicsContext* gc = NULL;
+#ifndef __ANDROID__
+    MyGraphicsContext mgc;
+    if ( mgc.valid() )
+        initialize (mgc._gc.get());
+#endif
+}
+
+Capabilities::initialize(osg::GraphicsContext *gc)
+{
     // check the environment in order to disable ATI workarounds
     bool enableATIworkarounds = true;
     if ( ::getenv( "OSGEARTH_DISABLE_ATI_WORKAROUNDS" ) != 0L )
@@ -165,22 +215,11 @@ _isCoreProfile          ( true )
     _isGLES = false;
 #endif
 
-    // create a graphics context so we can query OpenGL support:
-    osg::GraphicsContext* gc = NULL;
-    unsigned int id = 0;
-#ifndef __ANDROID__
-    MyGraphicsContext mgc;
-    if ( mgc.valid() )
-    {
-        gc = mgc._gc.get();
-        id = gc->getState()->getContextID();
-    }
-#endif
-
 #ifndef __ANDROID__
     if ( gc != NULL )
 #endif
     {
+        unsigned int id = gc->getState()->getContextID();
         const osg::GL2Extensions* GL2 = osg::GL2Extensions::Get( id, true );
 
         OE_INFO << LC << "osgEarth Version: " << osgEarthGetVersion() << std::endl;
