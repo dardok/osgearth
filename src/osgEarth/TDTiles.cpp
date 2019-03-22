@@ -17,12 +17,11 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>
  */
 #include <osgEarth/TDTiles>
+#include <osgEarth/Async>
 #include <osgEarth/Utils>
 #include <osgEarth/Registry>
+#include <osgEarth/URI>
 #include <osgDB/FileNameUtils>
-#include <osgDB/Registry>
-#include <osg/PagedLOD>
-#include <osg/Version>
 
 using namespace osgEarth;
 
@@ -30,161 +29,98 @@ using namespace osgEarth;
 
 //........................................................................
 
-#define PSEUDOLOADER_TILE_CONTENT_EXT ".osgearth_3dtiles_tile"
-#define PSEUDOLOADER_TILE_CHILDREN_EXT ".osgearth_3dtiles_children"
-#define TAG_TILENODE "osgEarth::TDTiles::TileNode"
+#define PSEUDOLOADER_TILE_CONTENT_EXT "osgearth_3dtiles_content"
+#define PSEUDOLOADER_TILE_CHILDREN_EXT "osgearth_3dtiles_children"
+#define PSEUDOLOADER_EXTERNAL_TILESET_EXT "osgearth_3dtiles_external_tileset"
+#define TAG_INVOKER "osgEarth::TDTiles::Invoker"
 
 namespace osgEarth { namespace TDTiles
 {
-    struct GeometricErrorPagedLOD : public osg::PagedLOD
+    //! Operation that loads all of a tilenode's children.
+    struct LoadChildren : public AsyncFunction
     {
-    public:
-        GeometricErrorPagedLOD(ContentHandler* handler) : osg::PagedLOD(), _handler(handler), _refine(REFINE_REPLACE) { }
-        TDTiles::RefinePolicy _refine;
-        osg::ref_ptr<ContentHandler> _handler;
-
-    public:
-
-        void traverse(osg::NodeVisitor& nv)
+        osg::observer_ptr<TDTiles::TileNode> _tileNode;
+        LoadChildren(TDTiles::TileNode* tileNode) : _tileNode(tileNode) { }
+        virtual ReadResult operator()() const
         {
-            // set the frame number of the traversal so that external nodes can find out how active this
-            // node is.
-            if (nv.getFrameStamp() &&
-                nv.getVisitorType() == osg::NodeVisitor::CULL_VISITOR)
+            OE_DEBUG << LC << "LoadChildren" << std::endl;
+            osg::ref_ptr<TDTiles::TileNode> tileNode;
+            if (_tileNode.lock(tileNode))
             {
-                setFrameNumberOfLastTraversal(nv.getFrameStamp()->getFrameNumber());
+                return tileNode->loadChildren();
             }
+            else return ReadResult(ReadResult::RESULT_NOT_FOUND);
+        }
+    };
 
-            double timeStamp = nv.getFrameStamp() ? nv.getFrameStamp()->getReferenceTime() : 0.0;
-            unsigned int frameNumber = nv.getFrameStamp() ? nv.getFrameStamp()->getFrameNumber() : 0;
-            bool updateTimeStamp = nv.getVisitorType() == osg::NodeVisitor::CULL_VISITOR;
-
-            switch (nv.getTraversalMode())
+    //! Operation that loads one child of a TileNode.
+    struct LoadChild : public AsyncFunction
+    {
+        osg::observer_ptr<TDTiles::TileNode> _tileNode;
+        unsigned _index;
+        LoadChild(TDTiles::TileNode* tileNode, unsigned index) 
+            : _tileNode(tileNode), _index(index) { }
+        virtual ReadResult operator()() const
+        {
+            OE_DEBUG << LC << "LoadChild" << std::endl;
+            osg::ref_ptr<TDTiles::TileNode> tileNode;
+            if (_tileNode.lock(tileNode))
             {
-            case(osg::NodeVisitor::TRAVERSE_ALL_CHILDREN):
-                std::for_each(_children.begin(), _children.end(), osg::NodeAcceptOp(nv));
-                break;
-            case(osg::NodeVisitor::TRAVERSE_ACTIVE_CHILDREN):
-            {
-#if OSG_VERSION_GREATER_OR_EQUAL(3,5,6)
-                osg::CullStack* cullStack = nv.asCullStack();
-#else
-                osg::CullStack* cullStack = dynamic_cast<osg::CullStack*>(&nv);
-#endif
+                return tileNode->loadChild(_index);
+            }
+            else return ReadResult(ReadResult::RESULT_NOT_FOUND);
+        }
+    };
 
-                if (cullStack && cullStack->getLODScale() > 0)
+    //! Operation that loads the content of a TileNode (from a URI)
+    struct LoadTileContent : public AsyncFunction
+    {
+        osg::observer_ptr<TDTiles::TileNode> _tileNode;
+        LoadTileContent(TDTiles::TileNode* tileNode) : _tileNode(tileNode) { }
+        virtual ReadResult operator()() const
+        {
+            OE_DEBUG << LC << "LoadTileContent" << std::endl;
+            osg::ref_ptr<TDTiles::TileNode> tileNode;
+            if (_tileNode.lock(tileNode))
+            {
+                return tileNode->loadContent();
+            }
+            else return ReadResult(ReadResult::RESULT_NOT_FOUND);
+        }
+    };
+
+    //! Operation that loads an external tile set
+    struct LoadExternalTileset : public AsyncFunction
+    {
+        osg::observer_ptr<TDTilesetGroup> _group;
+        LoadExternalTileset(TDTilesetGroup* group) : _group(group) { }
+        virtual ReadResult operator()() const
+        {
+            OE_DEBUG << LC << "LoadExternalTileset" << std::endl;
+            osg::ref_ptr<TDTilesetGroup> group;
+            if (_group.lock(group))
+            {
+                const URI& uri = group->getTilesetURL();
+                OE_INFO << LC << "Loading external tileset " << uri.full() << std::endl;
+
+                ReadResult r = uri.readString(group->getReadOptions());
+                if (r.succeeded())
                 {
-                    float sizeInMeters = getBound().radius() * 2.0;
-                    float sizeInPixels = cullStack->clampedPixelSize(getBound()) / cullStack->getLODScale();
-
-                    int lastChildTraversed = -1;
-                    bool needToLoadChild = false;
-                    for (unsigned int i = 0; i < _rangeList.size(); ++i)
+                    TDTiles::Tileset* tileset = TDTiles::Tileset::create(r.getString(), uri.context());
+                    if (tileset)
                     {
-                        //float minMetersPerPixel = _rangeList[i].first;
-                        float maxMetersPerPixel = _rangeList[i].second;
-
-                        // adjust sizeInPixels for the current SSE:
-                        float effectiveSizeInPixels = sizeInPixels / _handler->getMaxScreenSpaceError();
-                        float effectiveMetersPerPixel = effectiveSizeInPixels > 0.0? sizeInMeters / effectiveSizeInPixels : 0.0f;
-
-                        OE_DEBUG << getName() << ": px=" << sizeInPixels << ", eMPP=" << effectiveMetersPerPixel << ", maxMPP=" << maxMetersPerPixel << ", SSE=" << _handler->getMaxScreenSpaceError() << std::endl;
-
-                        if (effectiveMetersPerPixel < maxMetersPerPixel)
-                        {
-                            if (i < _children.size())
-                            {
-                                if (updateTimeStamp)
-                                {
-                                    _perRangeDataList[i]._timeStamp = timeStamp;
-                                    _perRangeDataList[i]._frameNumber = frameNumber;
-                                }
-
-                                if (_refine == TDTiles::REFINE_ADD)
-                                {
-                                    _children[i]->accept(nv);
-                                }
-
-                                lastChildTraversed = (int)i;
-                            }
-                            else
-                            {
-                                needToLoadChild = true;
-                            }
-                        }
+                        return group->loadRoot(tileset);
                     }
-
-                    if (_refine == REFINE_REPLACE && lastChildTraversed >= 0)
+                    else
                     {
-                        _children[lastChildTraversed]->accept(nv);
-                    }
-
-                    if (needToLoadChild)
-                    {
-                        unsigned int numChildren = _children.size();
-
-                        // select the last valid child.
-                        if (numChildren > 0 && ((int)numChildren - 1) != lastChildTraversed)
-                        {
-                            if (updateTimeStamp)
-                            {
-                                _perRangeDataList[numChildren - 1]._timeStamp = timeStamp;
-                                _perRangeDataList[numChildren - 1]._frameNumber = frameNumber;
-                            }
-                            _children[numChildren - 1]->accept(nv);
-                        }
-
-                        // now request the loading of the next unloaded child.
-                        if (!_disableExternalChildrenPaging &&
-                            nv.getDatabaseRequestHandler() &&
-                            numChildren < _perRangeDataList.size())
-                        {
-                            // compute priority from where abouts in the required range the distance falls.
-                            float priority = 0.5f;
-
-                            // modify the priority according to the child's priority offset and scale.
-                            priority = _perRangeDataList[numChildren]._priorityOffset + priority * _perRangeDataList[numChildren]._priorityScale;
-
-                            if (_databasePath.empty())
-                            {
-                                nv.getDatabaseRequestHandler()->requestNodeFile(_perRangeDataList[numChildren]._filename, nv.getNodePath(), priority, nv.getFrameStamp(), _perRangeDataList[numChildren]._databaseRequest, _databaseOptions.get());
-                            }
-                            else
-                            {
-                                // prepend the databasePath to the child's filename.
-                                nv.getDatabaseRequestHandler()->requestNodeFile(_databasePath + _perRangeDataList[numChildren]._filename, nv.getNodePath(), priority, nv.getFrameStamp(), _perRangeDataList[numChildren]._databaseRequest, _databaseOptions.get());
-                            }
-                        }
+                        return ReadResult("Invalid tileset JSON");
                     }
                 }
-
-
-                break;
+                return ReadResult("Failed to load external tileset");
             }
-            default:
-                break;
-            }
+            else return ReadResult();
         }
     };
-
-    struct TileChildrenPseudoloader : public osgDB::ReaderWriter
-    {
-        ReadResult readNode(const std::string& location, const osgDB::Options* options) const
-        {
-            if (location != PSEUDOLOADER_TILE_CHILDREN_EXT)
-                return ReadResult::FILE_NOT_HANDLED;
-
-            osg::ref_ptr<TDTiles::TileNode> tileNode = OptionsData<TDTiles::TileNode>::get(options, TAG_TILENODE);
-            if (!tileNode.valid())
-                return ReadResult::FILE_NOT_FOUND;
-
-            osg::ref_ptr<osg::Node> result = tileNode->loadChildren();
-            return ReadResult(result.release());
-        }
-    };
-
-    REGISTER_OSGPLUGIN(osgearth_3dtiles_children, TileChildrenPseudoloader);
-
 }}
 
 //........................................................................
@@ -278,6 +214,19 @@ TDTiles::BoundingVolume::getJSON() const
         a.append(region()->zMin());
         a.append(region()->zMax());
         value["region"] = a;
+    }
+    else if (sphere().isSet())
+    {
+        Json::Value a(Json::arrayValue);
+        a.append(sphere()->center().x());
+        a.append(sphere()->center().y());
+        a.append(sphere()->center().z());
+        a.append(sphere()->radius());
+        value["sphere"] = a;
+    }
+    else if (box().isSet())
+    {
+        OE_WARN << LC << "box not implemented" << std::endl;
     }
     return value;
 }
@@ -401,9 +350,10 @@ TDTiles::Tile::getJSON() const
     if (geometricError().isSet())
         value["geometricError"] = geometricError().get();
     if (refine().isSet())
-        value["refine"] = (refine().get() == REFINE_ADD)? "add" : "replace";
+        value["refine"] = (refine().get() == REFINE_ADD) ? "add" : "replace";
     if (content().isSet())
         value["content"] = content()->getJSON();
+
 
     if (!children().empty())
     {
@@ -471,8 +421,7 @@ TDTiles::Tileset::create(const std::string& json, const URIContext& uc)
 
 TDTiles::TileNode::TileNode(TDTiles::Tile* tile, 
                             TDTiles::ContentHandler* handler, 
-                            const osgDB::Options* readOptions,
-                            bool preloadContent) :
+                            const osgDB::Options* readOptions) :
     _tile(tile),
     _handler(handler),
     _readOptions(readOptions)
@@ -497,40 +446,85 @@ TDTiles::TileNode::TileNode(TDTiles::Tile* tile,
             bs.center().set(0,0,0);
         }
     }
-
-    GeometricErrorPagedLOD* plod = new GeometricErrorPagedLOD(_handler.get()); //osg::PagedLOD();
-    if (bs.valid())
-    {
-        plod->setCenter(bs.center());
-        plod->setRadius(bs.radius());
-    }
-
+    // tag this object as the invoker of the paging request:
     osg::ref_ptr<osgDB::Options> newOptions = Registry::instance()->cloneOrCreateOptions(readOptions);
-    OptionsData<TDTiles::TileNode>::set(newOptions.get(), TAG_TILENODE, this);
-    plod->setDatabaseOptions(newOptions.get());
+    OptionsData<TDTiles::TileNode>::set(newOptions.get(), TAG_INVOKER, this);
 
-    // Will begin loading content immediately when in view.
-    osg::ref_ptr<osg::Node> content = readContent();
-    if (content.valid())
+    // aka "maximum meters per pixel for which to use me"
+    float geometricError = tile->geometricError().getOrUse(FLT_MAX);
+
+    // actual content for this tile (optional)
+    osg::ref_ptr<osg::Node> contentNode = loadContent();
+
+    if (tile->refine() == REFINE_REPLACE)
     {
-        plod->setName(_tile->content()->uri()->base());
-        plod->addChild(content, 0.0f, FLT_MAX);
-        plod->setNumChildrenThatCannotBeExpired(1u);
+        //osg::ref_ptr<GeometricErrorPagedLOD> plod = new GeometricErrorPagedLOD(_handler.get());
+        osg::ref_ptr<AsyncLOD> lod = new AsyncLOD();
+        lod->setMode(AsyncLOD::MODE_GEOMETRIC_ERROR);
+        lod->setPolicy(AsyncLOD::POLICY_REPLACE);
+
+        if (bs.valid())
+        {
+            lod->setCenter(bs.center());
+            lod->setRadius(bs.radius());
+        }
+
+        if (contentNode.valid())
+        {
+            lod->setName(_tile->content()->uri()->base());
+            lod->addChild(contentNode, 0.0f, FLT_MAX);
+        }
+
+        if (tile->children().size() > 0)
+        {
+            // Async children as a group. All must load before replacing child 0.
+            // TODO: consider a way to load each child asyncrhonously but still
+            // block the refinement until all are loaded.
+            lod->addChild(new LoadChildren(this), 0.0f, geometricError);
+        }
+
+        addChild(lod);
     }
 
-    addChild(plod);
-
-    if (tile->children().size() > 0)
+    else // tile->refine() == REFINE_ADD
     {
-        // aka "maximum meters per pixel for which to use me"
-        float geometricError = tile->geometricError().getOrUse(FLT_MAX);
+        if (contentNode.valid())
+        {
+            addChild(contentNode.get());
+        }
 
-        unsigned childrenIndex = plod->getNumChildren();
+        for (unsigned i = 0; i < _tile->children().size(); ++i)
+        {
+            // Each tile gets its own async load since they don't depend on each other
+            // nor do they depend on a parent loading first.
+            osg::ref_ptr<AsyncLOD> lod = new AsyncLOD();
+            lod->setMode(AsyncLOD::MODE_GEOMETRIC_ERROR);
+            lod->setPolicy(AsyncLOD::POLICY_ACCUMULATE);
 
-        // Load the children when the geometric error exceeds that of this tile.
-        plod->setFileName(childrenIndex, PSEUDOLOADER_TILE_CHILDREN_EXT);
-        plod->setRange(childrenIndex, 0.0f, geometricError);
-        plod->_refine = tile->refine().get();
+            TDTiles::Tile* childTile = _tile->children()[i].get();
+
+            if (childTile->boundingVolume().isSet())
+            {
+                osg::BoundingSphere bs = childTile->boundingVolume()->asBoundingSphere();
+                if (bs.valid())
+                {
+                    lod->setCenter(bs.center());
+                    lod->setRadius(bs.radius());
+                }
+            }
+
+            // backup plan if the child's BV isn't set - use parent BV
+            else if (bs.valid())
+            {
+                lod->setCenter(bs.center());
+                lod->setRadius(bs.radius());
+            }
+
+            // Load this child asynchronously:
+            lod->addChild(new LoadChild(this, i), 0.0, geometricError);
+
+            addChild(lod);
+        }
     }
 }
 
@@ -547,7 +541,7 @@ TDTiles::TileNode::loadChildren() const
         if (childTile)
         {
             // create a new TileNode:
-            TileNode* child = new TileNode(childTile, _handler.get(), _readOptions.get(), true);
+            TileNode* child = new TileNode(childTile, _handler.get(), _readOptions.get());
             children->addChild(child);
         }
     }
@@ -556,16 +550,17 @@ TDTiles::TileNode::loadChildren() const
 }
 
 osg::ref_ptr<osg::Node>
-TDTiles::TileNode::readContent() const
+TDTiles::TileNode::loadContent() const
 {
     osg::ref_ptr<osg::Node> result;
 
-    if (osgDB::getLowerCaseFileExtension(_tile->content()->uri()->full()) == "json")
+    if (osgDB::getLowerCaseFileExtension(_tile->content()->uri()->base()) == "json")
     {
-        // external tileset... handle somehow
-        OE_INFO << LC << "Tile content might be an external dataset! Do something." << std::endl;
+        // external tileset reference
+        TDTilesetGroup* group = new TDTilesetGroup();
+        group->setTilesetURL(_tile->content()->uri().get());
+        result = group;
     }
-
     else if (_handler.valid())
     {
         // Custom handler? invoke it now
@@ -575,10 +570,18 @@ TDTiles::TileNode::readContent() const
     return result;
 }
 
+osg::ref_ptr<osg::Node>
+TDTiles::TileNode::loadChild(unsigned i) const
+{
+    TDTiles::Tile* child = _tile->children()[i].get();
+    osg::ref_ptr<TDTiles::TileNode> node = new TDTiles::TileNode(
+        child, _handler.get(), _readOptions.get());
+    return node;
+}
+
 //........................................................................
 
-TDTiles::ContentHandler::ContentHandler() :
-    _maxSSE(1.0f)
+TDTiles::ContentHandler::ContentHandler()
 {
     //nop
 }
@@ -589,9 +592,12 @@ TDTiles::ContentHandler::createNode(TDTiles::Tile* tile, const osgDB::Options* r
     osg::ref_ptr<osg::Node> result;
 
     // default action: just try to load a node using OSG
-    if (tile->content().isSet() && tile->content()->uri().isSet())
+    if (tile->content().isSet() && 
+        tile->content()->uri().isSet() &&
+        !tile->content()->uri()->empty())
     {
-        OE_INFO << LC << "Loading content, URI = " << tile->content()->uri()->full() << std::endl;
+        Registry::instance()->startActivity(tile->content()->uri()->base());
+
         osgEarth::ReadResult rr = tile->content()->uri()->readNode(readOptions);
         if (rr.succeeded())
         {
@@ -601,20 +607,9 @@ TDTiles::ContentHandler::createNode(TDTiles::Tile* tile, const osgDB::Options* r
         {
             OE_WARN << LC << "Read error: " << rr.errorDetail() << std::endl;
         }
+        Registry::instance()->endActivity(tile->content()->uri()->base());
     }
     return result;
-}
-
-void
-TDTiles::ContentHandler::setMaxScreenSpaceError(float value)
-{
-    _maxSSE = value;
-}
-
-float
-TDTiles::ContentHandler::getMaxScreenSpaceError() const
-{
-    return _maxSSE;
 }
 
 //........................................................................
@@ -639,10 +634,39 @@ TDTilesetGroup::setReadOptions(const osgDB::Options* value)
     _readOptions = value;
 }
 
+const osgDB::Options*
+TDTilesetGroup::getReadOptions() const
+{
+    return _readOptions.get();
+}
+
 TDTiles::ContentHandler*
 TDTilesetGroup::getContentHandler() const
 {
     return _handler.get();
+}
+
+osg::ref_ptr<osg::Node>
+TDTilesetGroup::loadRoot(TDTiles::Tileset* tileset) const
+{
+    osg::ref_ptr<osg::Node> result;
+
+    // Set up the root tile.
+    if (tileset->root().valid())
+    {
+        float maxMetersPerPixel = tileset->geometricError().getOrUse(FLT_MAX);
+
+        // create the root tile node and defer loading of its content:
+        osg::Node* tileNode = new TDTiles::TileNode(tileset->root().get(), _handler.get(), _readOptions.get());
+
+        AsyncLOD* lod = new AsyncLOD();
+        lod->setMode(AsyncLOD::MODE_GEOMETRIC_ERROR);
+        lod->addChild(tileNode, 0.0, maxMetersPerPixel);
+
+        result = lod;
+    }
+
+    return result;
 }
 
 void
@@ -651,24 +675,32 @@ TDTilesetGroup::setTileset(TDTiles::Tileset* tileset)
     // clear out the node in preparation for a new tileset
     removeChildren(0, getNumChildren());
 
-    _tileset = tileset;
-
-    // Set up the root tile.
-    if (_tileset->root().valid())
+    // create the root tile node and defer loading of its content:
+    osg::ref_ptr<osg::Node> tileNode = loadRoot(tileset);
+    if (tileNode.valid())
     {
-        // create the root tile node and defer loading of its content:
-        TDTiles::TileNode* tileNode = new TDTiles::TileNode(_tileset->root().get(), _handler.get(), _readOptions.get(), false);
-        TDTiles::GeometricErrorPagedLOD* plod = new TDTiles::GeometricErrorPagedLOD(_handler.get());
-        addChild(plod);        
-        float maxMetersPerPixel = _tileset->geometricError().getOrUse(FLT_MAX);
-        plod->setName("Tileset");
-        plod->addChild(tileNode, 0.0f, maxMetersPerPixel);
+        addChild(tileNode);
     }
 }
 
 void
 TDTilesetGroup::setTilesetURL(const URI& location)
 {
-    //TODO
-    OE_WARN << "TODO" << std::endl;
+    _tilesetURI = location;
+
+    // reset:
+    removeChildren(0, getNumChildren());
+
+    AsyncLOD* lod = new AsyncLOD();
+    lod->setMode(AsyncLOD::MODE_GEOMETRIC_ERROR);
+    lod->setName(location.base());
+    lod->addChild(new TDTiles::LoadExternalTileset(this), 0.0, FLT_MAX);
+
+    addChild(lod);
+}
+
+const URI&
+TDTilesetGroup::getTilesetURL() const
+{
+    return _tilesetURI;
 }

@@ -403,6 +403,7 @@ MapNode::init()
     osg::Material* defaultMaterial = new MaterialGL3();
     defaultMaterial->setDiffuse(defaultMaterial->FRONT, osg::Vec4(1,1,1,1));
     defaultMaterial->setAmbient(defaultMaterial->FRONT, osg::Vec4(1,1,1,1));
+    //defaultMaterial->setSpecular(defaultMaterial->FRONT, osg::Vec4(1,0,0,1));
     stateset->setAttributeAndModes(defaultMaterial, 1);
     MaterialCallback().operator()(defaultMaterial, 0L);
 
@@ -762,21 +763,19 @@ MapNode::traverse( osg::NodeVisitor& nv )
 void
 MapNode::resizeGLObjectBuffers(unsigned maxSize)
 {
-    osg::Group::resizeGLObjectBuffers(maxSize);
-
     LayerVector layers;
     getMap()->getLayers(layers);
     for (LayerVector::const_iterator i = layers.begin(); i != layers.end(); ++i)
     {
         i->get()->resizeGLObjectBuffers(maxSize);
     }
+
+    osg::Group::resizeGLObjectBuffers(maxSize);
 }
 
 void
 MapNode::releaseGLObjects(osg::State* state) const
 {
-    osg::Group::releaseGLObjects(state);
-
     LayerVector layers;
     getMap()->getLayers(layers);
     for (LayerVector::const_iterator i = layers.begin(); i != layers.end(); ++i)
@@ -791,6 +790,8 @@ MapNode::releaseGLObjects(osg::State* state) const
         uc->releaseGLObjects(state);
     for(const osg::Callback* ec = getEventCallback(); ec; ec = ec->getNestedCallback())
         ec->releaseGLObjects(state);
+
+    osg::Group::releaseGLObjects(state);
 }
 
 DrapingManager*
